@@ -67,3 +67,38 @@ Podobieństwo to średnia ważona po modalnościach dostępnych w obu raportach:
 Zalecamy odpalanie na izolowanych kontenerach! System odpytuje zewnętrzne serwery - nie przesadzać z automatycznymi wywołaniami
 
 Shipped as is, no warrianty, no responsibility! You use at your own risk!s
+
+# Przygotowanie do pracy po kolei
+
+Sklonuj repo, a nastepnie wypakuj dane przykładowe do katalogu `dane`. Folderpowinien mieć strukturę następującą: foldery a w każdym wszystkie materiały dotyczące danego incydentu/kampanii. Utwórz folder na podobizny ludzi znanych których często dotyczą kampanie, nazwijmy go `ludzie`. W folderze `ludzie` powinniśmy mieć foldery których nazwami są imiona/nazwiska osób, a w tych katalogach winny znajdować się ich zdjęcia.
+
+```
+uv sync
+uv run main.py --download-models
+uv run build_base.py ./dane --base base.json --reports-dir reports
+uv run cluster.py --base base.json --out clusters.json
+```
+
+
+Aby dokonać przygotowania pojedynczych źródeł można wykonac poniższe komendy
+
+```
+uv run main.py --text "Rząd wprowadza podatek od deszczu" --out report.json
+uv run main.py --image reklama.png --faces-dir ludzie/
+uv run main.py --url https://example.com --entity "BRAND=Baltic Pipeline"
+uv run main.py --video reklama.mp4 --gpu --no-vectors
+uv run main.py --audio nagranie.mp3 --speech-language pl --spectrograms-dir spektrogramy
+```
+
+Komendy poniżej pokazują jak opracoweany raport cecdh może zostać porównany z bazą
+
+```
+#Dodawaine wyniku do bazy
+uv run match.py report.json --base base.json --add --label "Orlen, pasywny dochód"
+# Test wyniku
+uv run match.py nowy.json --base base.json --out wynik.json
+# Klastrowanie bazy
+uv run cluster.py --base base.json --out clusters.json
+# Do którego klastra należy nowy raport
+uv run query.py nowy.json --base base.json --clusters clusters.json
+```
