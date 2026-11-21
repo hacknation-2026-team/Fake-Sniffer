@@ -25,6 +25,7 @@ dependencies = [
     "matplotlib",
     "openai",
     "beautifulsoup4",
+    "networkx",
 ]
 
 [dependency-groups]
