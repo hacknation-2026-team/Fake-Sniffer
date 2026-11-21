@@ -3,8 +3,8 @@ import pytest
 from PIL import Image
 from unittest.mock import MagicMock
 
-from video_feature_extractor import VideoFeatureExtractor, shared_scene_ratio
-from visual_feature_extractor import ImageHasher
+from feature_extractor.video_feature_extractor import VideoFeatureExtractor, shared_scene_ratio
+from feature_extractor.visual_feature_extractor import ImageHasher
 
 
 @pytest.fixture

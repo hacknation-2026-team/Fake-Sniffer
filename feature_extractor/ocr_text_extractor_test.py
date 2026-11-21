@@ -3,13 +3,13 @@ import numpy as np
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ocr_text_extractor import TextExtractor
+from feature_extractor.ocr_text_extractor import TextExtractor
 
 
 @pytest.fixture
 def mock_reader():
     """Podmienia easyocr.Reader na atrapę, aby testy nie ładowały sieci neuronowej."""
-    with patch("ocr_text_extractor.easyocr.Reader") as mock_reader_cls:
+    with patch("feature_extractor.ocr_text_extractor.easyocr.Reader") as mock_reader_cls:
         mock_instance = MagicMock()
         mock_reader_cls.return_value = mock_instance
         yield mock_instance
@@ -27,7 +27,7 @@ def sample_image(tmp_path: Path) -> str:
 
 def test_extractor_initialization():
     """Sprawdza przekazanie parametrów languages i use_gpu do easyocr.Reader."""
-    with patch("ocr_text_extractor.easyocr.Reader") as mock_cls:
+    with patch("feature_extractor.ocr_text_extractor.easyocr.Reader") as mock_cls:
         extractor = TextExtractor(languages=["pl", "de"], use_gpu=False)
         
         assert extractor.languages == ["pl", "de"]

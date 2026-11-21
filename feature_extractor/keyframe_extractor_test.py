@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from keyframe_extractor import LightweightKeyframeExtractor
+from feature_extractor.keyframe_extractor import LightweightKeyframeExtractor
 
 
 def noise_frame(seed: int, size=(96, 64)) -> np.ndarray:
