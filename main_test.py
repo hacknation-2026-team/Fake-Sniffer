@@ -52,7 +52,7 @@ def test_inputs_are_passed_to_orchestrator(tmp_path):
     main.main(["--url", "https://a.pl", "--image", "a.png", "--video", "a.mp4", "--out", str(tmp_path / "r.json")])
 
     assert FakeOrchestrator.instances[0].calls == [
-        {"url": "https://a.pl", "text": None, "image": "a.png", "video": "a.mp4"}
+        {"url": "https://a.pl", "text": None, "image": "a.png", "video": "a.mp4", "audio": None}
     ]
 
 
@@ -96,6 +96,41 @@ def test_defaults_match_orchestrator_config(tmp_path):
     assert config.use_gpu is False and config.include_vectors is True
     assert config.embedder_model == defaults.embedder_model
     assert config.keyframes_dir == defaults.keyframes_dir
+
+
+def test_audio_alone_is_enough(tmp_path):
+    code = main.main(["--audio", "nagranie.mp3", "--out", str(tmp_path / "r.json")])
+
+    assert code == 0
+    assert FakeOrchestrator.instances[0].calls[0]["audio"] == "nagranie.mp3"
+
+
+def test_no_input_error_mentions_audio(capsys):
+    with pytest.raises(SystemExit):
+        main.main([])
+    assert "--audio" in capsys.readouterr().err
+
+
+def test_speech_flags_are_mapped_to_config(tmp_path):
+    main.main([
+        "--video", "a.mp4", "--whisper-model", "small", "--speech-language", "pl",
+        "--spectrograms-dir", "spektrogramy", "--out", str(tmp_path / "r.json"),
+    ])
+
+    config = FakeOrchestrator.instances[0].config
+    assert config.whisper_model == "small"
+    assert config.speech_language == "pl"
+    assert config.spectrograms_dir == "spektrogramy"
+
+
+def test_speech_defaults_match_orchestrator_config(tmp_path):
+    main.main(["--audio", "a.mp3", "--out", str(tmp_path / "r.json")])
+
+    config = FakeOrchestrator.instances[0].config
+    defaults = OrchestratorConfig()
+    assert config.whisper_model == defaults.whisper_model
+    assert config.speech_language == defaults.speech_language
+    assert config.spectrograms_dir == defaults.spectrograms_dir
 
 
 @pytest.mark.parametrize("value", ["BRAND", "=fraza", "BRAND=", " = "])

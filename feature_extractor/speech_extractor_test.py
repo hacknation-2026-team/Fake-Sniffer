@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from speech_extractor import SAMPLE_RATE, SpeechExtractor, load_audio, sha256_file
+from feature_extractor.speech_extractor import SAMPLE_RATE, SpeechExtractor, load_audio, sha256_file
 
 
 def tone(seconds: float, freq: float = 440.0, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
@@ -239,7 +239,7 @@ def test_api_backend_splits_audio_and_assigns_words(tmp_path):
             ],
         )
 
-    with patch("openai.OpenAI") as mock_client_cls, patch("speech_extractor.API_CHUNK_SECONDS", 1):
+    with patch("openai.OpenAI") as mock_client_cls, patch("feature_extractor.speech_extractor.API_CHUNK_SECONDS", 1):
         mock_client_cls.return_value.audio.transcriptions.create.side_effect = create
         result = SpeechExtractor(backend="api", language="pl").transcribe(path, word_timestamps=True)
 

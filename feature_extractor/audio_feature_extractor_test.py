@@ -3,8 +3,8 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from audio_feature_extractor import AudioFeatureExtractor
-from sentence_rhythm_extractor import SentenceRhythmExtractor
+from feature_extractor.audio_feature_extractor import AudioFeatureExtractor
+from feature_extractor.sentence_rhythm_extractor import SentenceRhythmExtractor
 
 
 def word(start, end, text):

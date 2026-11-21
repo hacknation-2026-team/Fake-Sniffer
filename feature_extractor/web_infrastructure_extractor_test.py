@@ -501,3 +501,10 @@ def test_analyze_stores_visible_page_text(extractor):
 def test_analyze_without_browser_has_no_page_text(extractor):
     patch_steps(extractor)
     assert extractor.analyze("https://szybki.pl", fetch_page=False).page_text is None
+
+
+def test_analyze_keeps_page_html(extractor):
+    patch_steps(extractor)
+
+    assert extractor.analyze("https://t.example/c").page_html == TEMPLATE_A
+    assert extractor.analyze("https://szybki.pl", fetch_page=False).page_html is None

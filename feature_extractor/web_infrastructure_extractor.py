@@ -88,6 +88,7 @@ class InfrastructureReport:
     redirect_chain: List[RedirectHop] = field(default_factory=list)
     dom_fingerprint: Optional[DomFingerprint] = None
     page_text: Optional[str] = None
+    page_html: Optional[str] = None
     rdap: Optional[RdapInfo] = None
     dns: Optional[DnsInfo] = None
     tls: Optional[CertInfo] = None
@@ -478,6 +479,7 @@ class WebInfrastructureExtractor:
                 report.final_url = page["final_url"]
                 report.dom_fingerprint = self.dom_fingerprint(page["html"])
                 report.page_text = self.visible_text(page["html"])
+                report.page_html = page["html"]
                 report.host = urlparse(page["final_url"]).hostname or report.host
             except Exception as exc:
                 report.errors.append(f"browser: {type(exc).__name__}: {exc}")

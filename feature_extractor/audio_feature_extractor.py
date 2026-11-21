@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, TypeAlias, Union
 
-from sentence_rhythm_extractor import SentenceRhythmExtractor
+from .sentence_rhythm_extractor import SentenceRhythmExtractor
 
 if TYPE_CHECKING:
-    from spectrogram_extractor import SpectrogramExtractor
-    from speech_extractor import SegmentDict, SpeechExtractor, TranscriptDict
+    from .spectrogram_extractor import SpectrogramExtractor
+    from .speech_extractor import SegmentDict, SpeechExtractor, TranscriptDict
 
 Granularity: TypeAlias = Literal["segment", "sentence", "word"]
 KeyFormat: TypeAlias = Literal["start", "range", "hms"]

@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from bs4.element import CData, Comment, Declaration, Doctype, NavigableString, ProcessingInstruction, Tag
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
-from sentence_rhythm_extractor import SentenceRhythmExtractor
+from .sentence_rhythm_extractor import SentenceRhythmExtractor
 
 PARAGRAPH_LENGTH_CLASSES = ("short", "medium", "long", "very_long")
 PATTERN_LETTERS = {

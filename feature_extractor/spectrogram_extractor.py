@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from matplotlib.figure import Figure
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypeAlias, TypedDict
 
-from speech_extractor import SAMPLE_RATE, SILENCE_PEAK, load_audio, sha256_file
+from .speech_extractor import SAMPLE_RATE, SILENCE_PEAK, load_audio, sha256_file
 
 EmbeddingVector: TypeAlias = List[float]
 SpectrogramKind: TypeAlias = Literal["mel", "linear"]

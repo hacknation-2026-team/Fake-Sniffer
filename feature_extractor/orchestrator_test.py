@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from feature_extractor.orchestrator import Orchestrator, OrchestratorConfig, Report, StepResult
 from feature_extractor.text_chunk_embedder import EmbeddedChunk
@@ -62,7 +62,7 @@ def test_text_runs_only_text_extractors():
     mocks = text_mocks()
     report = make_orchestrator(**mocks).run(text="Tusk poleca platformę")
 
-    assert names(report) == ["named_entities", "text_embeddings"]
+    assert names(report) == ["named_entities", "text_embeddings", "sentence_rhythm", "paragraphs"]
     assert {s.source for s in report.steps} == {"text"}
     assert all(s.status == "ok" for s in report.steps)
     mocks["text_embedder"].extract_embeddings.assert_called_once_with("Tusk poleca platformę", source_type="unknown")
@@ -73,6 +73,13 @@ def test_text_embeddings_are_plain_dicts():
     assert report.step("text_embeddings").data == [
         {"chunk_index": 0, "text": "treść", "embedding": [0.1, 0.2], "word_count": 1, "source_type": "unknown"}
     ]
+
+
+def test_text_gets_sentence_rhythm_and_paragraphs():
+    report = make_orchestrator(**text_mocks()).run(text="Nagłówek\n\nPierwszy akapit. Drugie zdanie!")
+
+    assert report.step("sentence_rhythm").data["n_sentences"] == 3
+    assert report.step("paragraphs").data["structure"]["pattern"] == "Hs"
 
 
 def test_image_steps_in_order_with_ocr_text_fed_to_text_extractors():
@@ -150,7 +157,7 @@ def test_url_steps_use_page_text_for_text_extractors():
 
     report = make_orchestrator(web_extractor=web, **mocks).run(url="https://szybki.pl")
 
-    assert names(report) == ["web_infrastructure", "named_entities", "text_embeddings"]
+    assert names(report) == ["web_infrastructure", "named_entities", "text_embeddings", "paragraphs"]
     assert {s.source for s in report.steps} == {"url"}
     mocks["text_embedder"].extract_embeddings.assert_called_once_with("Szok! Tusk poleca", source_type="webpage")
 
@@ -167,7 +174,33 @@ def test_url_with_partial_failures_is_marked_partial():
     assert step.status == "partial"
     assert step.error == "tls: ConnectionRefusedError: 443; rdap: HTTPError: 500"
     assert not report.has_errors
-    assert [s.status for s in report.steps[1:]] == ["skipped", "skipped"]
+    assert [s.status for s in report.steps[1:]] == ["skipped", "skipped", "skipped"]
+
+
+def test_url_paragraphs_use_page_html_without_storing_it():
+    html = "<html><body><article><h1>Szok!</h1><p>Tusk poleca platformę.</p></article></body></html>"
+    web = MagicMock()
+    web.analyze.return_value.to_dict.return_value = {
+        "final_url": "https://szybki.pl/oferta", "page_text": "Szok! Tusk poleca", "page_html": html, "errors": [],
+    }
+    paragraphs = MagicMock()
+    paragraphs.analyze_html.return_value = {"structure": {"pattern": "Hs"}}
+
+    report = make_orchestrator(web_extractor=web, paragraphs=paragraphs, **text_mocks()).run(url="https://szybki.pl")
+
+    paragraphs.analyze_html.assert_called_once_with(html, url="https://szybki.pl/oferta")
+    assert report.step("paragraphs").data == {"structure": {"pattern": "Hs"}}
+    assert "page_html" not in report.step("web_infrastructure").data
+
+
+def test_url_without_html_skips_paragraphs():
+    web = MagicMock()
+    web.analyze.return_value.to_dict.return_value = {"page_text": "Szok!", "errors": []}
+
+    report = make_orchestrator(web_extractor=web, **text_mocks()).run(url="https://szybki.pl")
+
+    step = report.step("paragraphs")
+    assert (step.status, step.error) == ("skipped", "brak HTML strony")
 
 
 def video_mocks(identify=None):
@@ -182,7 +215,24 @@ def video_mocks(identify=None):
     }
     database = MagicMock()
     database.identify.side_effect = identify or [{"name": "Donald Tusk", "similarity": 0.9}, None]
-    return {"video_extractor": video, "face_database": database, **text_mocks()}
+    return {
+        "video_extractor": video,
+        "face_database": database,
+        "audio_extractor": audio_mock(text=""),
+        **text_mocks(),
+    }
+
+
+def audio_mock(text="Kup teraz. Promocja trwa tylko dziś!"):
+    audio = MagicMock()
+    audio.analyze.return_value = {
+        "text": text,
+        "timestamps": {0.0: "Kup teraz."},
+        "rhythm": {"n_sentences": 2},
+        "speech": {"status": "ok"},
+        "spectrogram": {"status": "ok", "features": {"embedding": [0.6, 0.8]}},
+    }
+    return audio
 
 
 def test_video_steps_and_face_identities():
@@ -191,7 +241,9 @@ def test_video_steps_and_face_identities():
 
     report = make_orchestrator(config, **mocks).run(video="ad.mp4")
 
-    assert names(report) == ["video_features", "face_identities", "named_entities", "text_embeddings"]
+    assert names(report) == [
+        "video_features", "face_identities", "audio_features", "named_entities", "text_embeddings",
+    ]
     mocks["video_extractor"].analyze.assert_called_once_with("ad.mp4", "kf")
     assert report.step("face_identities").data == [{"name": "Donald Tusk", "similarity": 0.9}, None]
     mocks["text_embedder"].extract_embeddings.assert_called_once_with("Tylko dziś", source_type="ocr")
@@ -200,6 +252,57 @@ def test_video_steps_and_face_identities():
 def test_video_without_reference_database_has_no_identity_step():
     report = make_orchestrator(**video_mocks()).run(video="ad.mp4")
     assert "face_identities" not in names(report)
+
+
+def test_video_transcript_joins_ocr_text():
+    mocks = {**video_mocks(), "audio_extractor": audio_mock()}
+    config = OrchestratorConfig(spectrograms_dir="spektrogramy")
+
+    report = make_orchestrator(config, **mocks).run(video="ad.mp4")
+
+    mocks["audio_extractor"].analyze.assert_called_once_with("ad.mp4", "spektrogramy")
+    assert report.step("audio_features").source == "video"
+    text = "Tylko dziś\n\nKup teraz. Promocja trwa tylko dziś!"
+    mocks["entity_extractor"].extract_entities.assert_called_once_with(text)
+    mocks["text_embedder"].extract_embeddings.assert_called_once_with(text, source_type="unknown")
+
+
+def test_failed_audio_track_keeps_ocr_text_steps():
+    mocks = video_mocks()
+    mocks["audio_extractor"].analyze.side_effect = RuntimeError("brak dekodera")
+
+    report = make_orchestrator(**mocks).run(video="ad.mp4")
+
+    assert report.step("audio_features").error == "RuntimeError: brak dekodera"
+    assert report.step("text_embeddings").status == "ok"
+    mocks["text_embedder"].extract_embeddings.assert_called_once_with("Tylko dziś", source_type="ocr")
+
+
+def test_audio_input_runs_audio_and_transcript_text_steps():
+    mocks = {"audio_extractor": audio_mock(), **text_mocks()}
+
+    report = make_orchestrator(**mocks).run(audio="nagranie.mp3")
+
+    assert names(report) == ["audio_features", "named_entities", "text_embeddings"]
+    assert {s.source for s in report.steps} == {"audio"}
+    mocks["audio_extractor"].analyze.assert_called_once_with("nagranie.mp3", None)
+    mocks["text_embedder"].extract_embeddings.assert_called_once_with(
+        "Kup teraz. Promocja trwa tylko dziś!", source_type="transcript"
+    )
+
+
+def test_audio_without_speech_skips_text_steps():
+    report = make_orchestrator(audio_extractor=audio_mock(text=""), **text_mocks()).run(audio="cisza.wav")
+
+    assert [s.status for s in report.steps] == ["ok", "skipped", "skipped"]
+
+
+def test_include_vectors_false_blanks_spectrogram_embedding():
+    config = OrchestratorConfig(include_vectors=False)
+
+    report = make_orchestrator(config, audio_extractor=audio_mock(), **text_mocks()).run(audio="a.mp3")
+
+    assert report.step("audio_features").data["spectrogram"]["features"]["embedding"] is None
 
 
 def test_include_vectors_false_blanks_vectors_but_keeps_pipeline_working():
@@ -222,11 +325,15 @@ def test_all_inputs_run_in_documented_order():
     web.analyze.return_value.to_dict.return_value = {"page_text": "Treść strony", "errors": []}
     mocks = {**image_mocks(), **video_mocks(), "web_extractor": web}
 
-    report = make_orchestrator(**mocks).run(url="https://a.pl", text="tekst", image="a.png", video="a.mp4")
+    report = make_orchestrator(**mocks).run(
+        url="https://a.pl", text="tekst", image="a.png", video="a.mp4", audio="a.mp3"
+    )
 
     sources = [s.source for s in report.steps]
-    assert [s for i, s in enumerate(sources) if i == 0 or s != sources[i - 1]] == ["url", "text", "image", "video"]
-    assert list(report.inputs) == ["url", "text", "image", "video"]
+    assert [s for i, s in enumerate(sources) if i == 0 or s != sources[i - 1]] == [
+        "url", "text", "image", "video", "audio",
+    ]
+    assert list(report.inputs) == ["url", "text", "image", "video", "audio"]
 
 
 def test_report_json_round_trip_keeps_polish_characters(tmp_path):
@@ -238,7 +345,9 @@ def test_report_json_round_trip_keeps_polish_characters(tmp_path):
     assert "Zażółć gęślą jaźń" in raw
     loaded = json.loads(raw)
     assert loaded["inputs"] == {"text": "Zażółć gęślą jaźń"}
-    assert [s["name"] for s in loaded["steps"]] == ["named_entities", "text_embeddings"]
+    assert [s["name"] for s in loaded["steps"]] == [
+        "named_entities", "text_embeddings", "sentence_rhythm", "paragraphs",
+    ]
     assert loaded["created_at"].endswith("+00:00")
 
 
@@ -287,3 +396,13 @@ def test_construction_does_not_load_any_model():
     assert orchestrator._device == "cuda"
     assert not any(isinstance(v, MagicMock) for v in vars(orchestrator).values())
     assert set(vars(orchestrator)) == {"config"}
+
+
+def test_speech_extractor_is_built_from_config():
+    config = OrchestratorConfig(use_gpu=True, whisper_model="small", speech_language="pl")
+
+    with patch("feature_extractor.speech_extractor.SpeechExtractor") as speech_cls:
+        speech = Orchestrator(config).speech
+
+    speech_cls.assert_called_once_with(model_name="small", language="pl", device="cuda")
+    assert speech is speech_cls.return_value

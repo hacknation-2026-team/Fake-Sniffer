@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from paragraph_extractor import ParagraphExtractor
+from feature_extractor.paragraph_extractor import ParagraphExtractor
 
 
 def paragraph(n_words: int) -> str:

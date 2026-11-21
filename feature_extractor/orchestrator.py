@@ -9,10 +9,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
+    from .audio_feature_extractor import AudioFeatureExtractor
     from .face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
     from .keyframe_extractor import LightweightKeyframeExtractor
     from .named_entity_extractor import NamedEntityExtractor
     from .ocr_text_extractor import TextExtractor
+    from .paragraph_extractor import ParagraphExtractor
+    from .sentence_rhythm_extractor import SentenceRhythmExtractor
+    from .spectrogram_extractor import SpectrogramExtractor
+    from .speech_extractor import SpeechExtractor
     from .text_chunk_embedder import DocumentEmbedder
     from .video_feature_extractor import VideoFeatureExtractor
     from .visual_feature_extractor import ImageHasher, VisualEmbedder
@@ -37,6 +42,9 @@ class OrchestratorConfig:
     keyframes_dir: str = "keyframes_out"
     reference_faces_dir: Optional[str] = None
     face_threshold: float = 0.45
+    whisper_model: Optional[str] = None
+    speech_language: Optional[str] = None
+    spectrograms_dir: Optional[str] = None
     include_vectors: bool = True
 
 
@@ -68,6 +76,15 @@ def _without_vectors(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_vectors(item) for item in value]
     return value
+
+
+def _video_text(ocr_text: Optional[str], transcript: Optional[str]) -> Tuple[Optional[str], str]:
+    ocr_text, transcript = (ocr_text or "").strip(), (transcript or "").strip()
+    if ocr_text and transcript:
+        return f"{ocr_text}\n\n{transcript}", "unknown"
+    if transcript:
+        return transcript, "transcript"
+    return ocr_text or None, "ocr"
 
 
 @dataclass
@@ -106,7 +123,7 @@ class Report:
 class Orchestrator:
     def __init__(self, config: Optional[OrchestratorConfig] = None):
         """
-        Uruchamia ekstraktory zależnie od podanych wejść: url, tekst, obraz, wideo.
+        Uruchamia ekstraktory zależnie od podanych wejść: url, tekst, obraz, wideo, audio.
         Modele ładują się dopiero przy pierwszym użyciu, a błąd jednego kroku
         trafia do raportu i nie zatrzymuje pozostałych.
         """
@@ -186,24 +203,56 @@ class Orchestrator:
 
         return WebInfrastructureExtractor()
 
+    @cached_property
+    def speech(self) -> SpeechExtractor:
+        from .speech_extractor import SpeechExtractor
+
+        return SpeechExtractor(
+            model_name=self.config.whisper_model,
+            language=self.config.speech_language,
+            device=self._device,
+        )
+
+    @cached_property
+    def spectrogram(self) -> SpectrogramExtractor:
+        from .spectrogram_extractor import SpectrogramExtractor
+
+        return SpectrogramExtractor()
+
+    @cached_property
+    def sentence_rhythm(self) -> SentenceRhythmExtractor:
+        from .sentence_rhythm_extractor import SentenceRhythmExtractor
+
+        return SentenceRhythmExtractor()
+
+    @cached_property
+    def paragraphs(self) -> ParagraphExtractor:
+        from .paragraph_extractor import ParagraphExtractor
+
+        return ParagraphExtractor(rhythm=self.sentence_rhythm)
+
+    @cached_property
+    def audio_extractor(self) -> AudioFeatureExtractor:
+        from .audio_feature_extractor import AudioFeatureExtractor
+
+        return AudioFeatureExtractor(self.speech, self.spectrogram, self.sentence_rhythm)
+
     def run(
         self,
         url: Optional[str] = None,
         text: Optional[str] = None,
         image: Optional[str] = None,
         video: Optional[str] = None,
+        audio: Optional[str] = None,
     ) -> Report:
         """
-        Kroki idą w kolejności url, tekst, obraz, wideo. Tekst z OCR lub ze strony
-        przechodzi dodatkowo przez rozpoznawanie nazw własnych i embeddingi.
+        Kroki idą w kolejności url, tekst, obraz, wideo, audio. Tekst z OCR, ze strony
+        lub z mowy przechodzi dodatkowo przez rozpoznawanie nazw własnych i embeddingi.
         """
-        given = {
-            name: value
-            for name, value in (("url", url), ("text", text), ("image", image), ("video", video))
-            if value and value.strip()
-        }
+        inputs = (("url", url), ("text", text), ("image", image), ("video", video), ("audio", audio))
+        given = {name: value for name, value in inputs if value and value.strip()}
         if not given:
-            raise ValueError("Podaj co najmniej jedno wejście: url, text, image lub video.")
+            raise ValueError("Podaj co najmniej jedno wejście: url, text, image, video lub audio.")
 
         report = Report(
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -212,11 +261,13 @@ class Orchestrator:
         if "url" in given:
             self._run_url(report, given["url"])
         if "text" in given:
-            self._text_steps(report, "text", given["text"], "unknown")
+            self._run_text(report, given["text"])
         if "image" in given:
             self._run_image(report, given["image"])
         if "video" in given:
             self._run_video(report, given["video"])
+        if "audio" in given:
+            self._run_audio(report, given["audio"])
         return report
 
     def _step(self, report: Report, name: str, source: str, action: Callable[[], Any]) -> Any:
@@ -251,14 +302,32 @@ class Orchestrator:
             ],
         )
 
+    def _run_text(self, report: Report, text: str) -> None:
+        self._text_steps(report, "text", text, "unknown")
+        self._step(report, "sentence_rhythm", "text", lambda: self.sentence_rhythm.analyze_text(text))
+        self._step(report, "paragraphs", "text", lambda: self.paragraphs.analyze_text(text))
+
     def _run_url(self, report: Report, url: str) -> None:
-        data = self._step(
-            report, "web_infrastructure", "url", lambda: self.web_extractor.analyze(url).to_dict()
-        )
+        page: Dict[str, Any] = {}
+        data = self._step(report, "web_infrastructure", "url", lambda: self._analyze_page(url, page))
         if data and data.get("errors"):
             report.steps[-1].status = "partial"
             report.steps[-1].error = "; ".join(data["errors"])
         self._text_steps(report, "url", (data or {}).get("page_text"), "webpage")
+        if not page.get("html"):
+            report.steps.append(StepResult("paragraphs", "url", "skipped", 0.0, None, "brak HTML strony"))
+            return
+        self._step(
+            report,
+            "paragraphs",
+            "url",
+            lambda: self.paragraphs.analyze_html(page["html"], url=data.get("final_url") or url),
+        )
+
+    def _analyze_page(self, url: str, page: Dict[str, Any]) -> Dict[str, Any]:
+        data = self.web_extractor.analyze(url).to_dict()
+        page["html"] = data.pop("page_html", None)
+        return data
 
     def _run_image(self, report: Report, path: str) -> None:
         ocr = self._step(report, "ocr", "image", lambda: self._read_image_text(path))
@@ -283,7 +352,23 @@ class Orchestrator:
                 "video",
                 lambda: self._identify(data["face_embeddings"]),
             )
-        self._text_steps(report, "video", (data or {}).get("ocr_text"), "ocr")
+        audio = self._step(
+            report,
+            "audio_features",
+            "video",
+            lambda: self.audio_extractor.analyze(path, self.config.spectrograms_dir),
+        )
+        text, source_type = _video_text((data or {}).get("ocr_text"), (audio or {}).get("text"))
+        self._text_steps(report, "video", text, source_type)
+
+    def _run_audio(self, report: Report, path: str) -> None:
+        audio = self._step(
+            report,
+            "audio_features",
+            "audio",
+            lambda: self.audio_extractor.analyze(path, self.config.spectrograms_dir),
+        )
+        self._text_steps(report, "audio", (audio or {}).get("text"), "transcript")
 
     def _read_image_text(self, path: str) -> Dict[str, Any]:
         lines = self.ocr.extract_with_details(path, min_confidence=self.config.min_ocr_confidence)

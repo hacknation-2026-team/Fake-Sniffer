@@ -5,7 +5,7 @@ import pytest
 import wave
 from pathlib import Path
 
-from spectrogram_extractor import SAMPLE_RATE, SpectrogramExtractor
+from feature_extractor.spectrogram_extractor import SAMPLE_RATE, SpectrogramExtractor
 
 
 def tone(seconds: float, freq: float = 440.0, amp: float = 0.5) -> np.ndarray:

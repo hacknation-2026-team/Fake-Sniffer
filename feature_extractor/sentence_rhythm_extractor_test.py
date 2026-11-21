@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from sentence_rhythm_extractor import FEATURE_KEYS, SentenceRhythmExtractor
+from feature_extractor.sentence_rhythm_extractor import FEATURE_KEYS, SentenceRhythmExtractor
 
 
 @pytest.fixture

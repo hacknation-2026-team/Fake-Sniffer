@@ -10,6 +10,7 @@ uv run main.py --text "Rząd wprowadza podatek od deszczu" --out report.json
 uv run main.py --image reklama.png --faces-dir referencje/
 uv run main.py --url https://example.pl --entity "BRAND=Baltic Pipeline"
 uv run main.py --video reklama.mp4 --gpu --no-vectors
+uv run main.py --audio nagranie.mp3 --speech-language pl --spectrograms-dir spektrogramy
 ```
 
 Zalecamy odpalanie na izolowanych kontenerach! System odpytuje zewnętrzne serwery - nie przesadzać z automatycznymi wywołaniami

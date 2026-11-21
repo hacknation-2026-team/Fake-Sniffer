@@ -16,6 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-file", type=Path, help="plik tekstowy UTF-8 z tekstem do analizy")
     parser.add_argument("--image", help="ścieżka do obrazka")
     parser.add_argument("--video", help="ścieżka do filmu")
+    parser.add_argument("--audio", help="ścieżka do nagrania (mp3, wav, m4a...)")
     parser.add_argument("--out", type=Path, default=Path("report.json"), help="plik raportu JSON")
     parser.add_argument("--gpu", action="store_true", help="użyj GPU (CUDA)")
     parser.add_argument("--no-vectors", action="store_true", help="pomiń wektory w raporcie")
@@ -29,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="własna encja, np. BRAND=Baltic Pipeline (można powtarzać)",
     )
     parser.add_argument("--embedder-model", default=OrchestratorConfig().embedder_model)
+    parser.add_argument("--whisper-model", help="model Whisper (domyślnie turbo na GPU, small na CPU)")
+    parser.add_argument("--speech-language", help="język mowy, np. pl (domyślnie wykrywany)")
+    parser.add_argument("--spectrograms-dir", help="gdzie zapisać spektrogramy .png i .npz (domyślnie nigdzie)")
     return parser
 
 
@@ -66,8 +70,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
 
-    if not any([args.url, text, args.image, args.video]):
-        parser.error("podaj co najmniej jedno z: --url, --text, --text-file, --image, --video")
+    if not any([args.url, text, args.image, args.video, args.audio]):
+        parser.error("podaj co najmniej jedno z: --url, --text, --text-file, --image, --video, --audio")
 
     config = OrchestratorConfig(
         use_gpu=args.gpu,
@@ -76,8 +80,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         keyframes_dir=args.keyframes_dir,
         entity_patterns=patterns,
         embedder_model=args.embedder_model,
+        whisper_model=args.whisper_model,
+        speech_language=args.speech_language,
+        spectrograms_dir=args.spectrograms_dir,
     )
-    report = Orchestrator(config).run(url=args.url, text=text, image=args.image, video=args.video)
+    report = Orchestrator(config).run(
+        url=args.url, text=text, image=args.image, video=args.video, audio=args.audio
+    )
     saved_to = report.save_json(args.out)
     print_summary(report, saved_to)
     return 1 if report.has_errors else 0
