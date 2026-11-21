@@ -1,0 +1,40 @@
+[project]
+name = "hacknation2026"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "easyocr",
+    "sentence-transformers",
+    "spacy>=3.8,<3.9",
+    "pl-core-news-lg",
+    "imagehash",
+    "Pillow",
+    "opencv-python-headless>=4.9,<5",  
+    "numpy",
+    "insightface",
+    "onnxruntime",
+    "playwright",
+    "requests",
+    "dnspython",
+    "tldextract",
+    "cryptography",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv.sources]
+pl-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl" }
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["*_test.py"]
+markers = [
+    "integration: testy z prawdziwymi modelami/siecią (wolne)",
+    "network: testy wymagające internetu",
+]
