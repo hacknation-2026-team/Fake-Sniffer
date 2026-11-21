@@ -1,5 +1,6 @@
 import dns.exception
 import dns.resolver
+import os
 import pytest
 import requests
 from datetime import datetime, timedelta, timezone
@@ -10,8 +11,13 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from playwright.sync_api import Error as PlaywrightError
 
-from feature_extractor.web_infrastructure_extractor import InfrastructureReport, WebInfrastructureExtractor
+from feature_extractor.web_infrastructure_extractor import (
+    InfrastructureReport,
+    WebInfrastructureExtractor,
+    install_chromium,
+)
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -508,3 +514,68 @@ def test_analyze_keeps_page_html(extractor):
 
     assert extractor.analyze("https://t.example/c").page_html == TEMPLATE_A
     assert extractor.analyze("https://szybki.pl", fetch_page=False).page_html is None
+
+
+def test_browser_cache_points_to_models_dir(tmp_path):
+    extractor = WebInfrastructureExtractor(models_dir=str(tmp_path / "m"))
+    extractor._use_browser_cache()
+
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "m" / "playwright")
+    assert (tmp_path / "m" / "playwright").is_dir()
+
+
+def test_existing_browser_path_is_respected(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/przegladarki")
+    WebInfrastructureExtractor(models_dir=str(tmp_path / "m"))._use_browser_cache()
+
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == "/opt/przegladarki"
+    assert not (tmp_path / "m" / "playwright").exists()
+
+
+def test_missing_chromium_is_installed_and_launch_retried(extractor):
+    browser = MagicMock()
+    playwright = MagicMock()
+    playwright.chromium.launch.side_effect = [
+        PlaywrightError("BrowserType.launch: Executable doesn't exist at /x/chrome"),
+        browser,
+    ]
+    with patch("feature_extractor.web_infrastructure_extractor.install_chromium") as install:
+        assert extractor._launch_browser(playwright) is browser
+
+    install.assert_called_once_with()
+    assert playwright.chromium.launch.call_count == 2
+
+
+def test_other_launch_errors_do_not_trigger_install(extractor):
+    playwright = MagicMock()
+    playwright.chromium.launch.side_effect = PlaywrightError("Target closed")
+    with patch("feature_extractor.web_infrastructure_extractor.install_chromium") as install:
+        with pytest.raises(PlaywrightError, match="Target closed"):
+            extractor._launch_browser(playwright)
+    install.assert_not_called()
+
+
+def test_installed_chromium_is_launched_once_without_install(extractor):
+    playwright = MagicMock()
+    with patch("feature_extractor.web_infrastructure_extractor.install_chromium") as install:
+        extractor._launch_browser(playwright)
+    install.assert_not_called()
+    playwright.chromium.launch.assert_called_once_with(headless=True)
+
+
+def test_install_chromium_runs_playwright_cli():
+    with patch("feature_extractor.web_infrastructure_extractor.subprocess.run") as run:
+        install_chromium()
+
+    command = run.call_args[0][0]
+    assert command[1:] == ["-m", "playwright", "install", "chromium"]
+    assert run.call_args[1] == {"check": True}
+
+
+def test_ensure_browser_launches_and_closes(extractor):
+    factory, browser, _ = make_playwright_mock(lambda handler, page: None)
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
+        extractor.ensure_browser()
+
+    browser.close.assert_called_once()
+    assert "PLAYWRIGHT_BROWSERS_PATH" in os.environ

@@ -220,3 +220,19 @@ def test_real_needle_in_haystack_fake_detection(real_embedder: DocumentEmbedder)
     assert "DNA" in best_chunk.text
     assert best_score > 0.78
     assert best_score > worst_score + 0.15
+
+def test_model_is_cached_in_requested_directory(tmp_path):
+    with patch("feature_extractor.text_chunk_embedder.SentenceTransformer") as mock_cls:
+        DocumentEmbedder(models_dir=str(tmp_path / "m"))
+
+    assert mock_cls.call_args[1]["cache_folder"] == str(tmp_path / "m" / "huggingface")
+    assert (tmp_path / "m" / "huggingface").is_dir()
+
+
+def test_model_is_cached_in_default_directory_when_not_given():
+    from feature_extractor.model_cache import HUGGINGFACE, model_dir
+
+    with patch("feature_extractor.text_chunk_embedder.SentenceTransformer") as mock_cls:
+        DocumentEmbedder()
+
+    assert mock_cls.call_args[1]["cache_folder"] == str(model_dir(HUGGINGFACE))

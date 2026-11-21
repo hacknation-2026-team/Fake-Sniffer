@@ -20,6 +20,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=Path("report.json"), help="plik raportu JSON")
     parser.add_argument("--gpu", action="store_true", help="użyj GPU (CUDA)")
     parser.add_argument("--no-vectors", action="store_true", help="pomiń wektory w raporcie")
+    parser.add_argument(
+        "--models-dir",
+        help="katalog na pobrane modele (domyślnie FAKE_SNIFFER_MODELS_DIR albo ./models)",
+    )
+    parser.add_argument(
+        "--download-models",
+        action="store_true",
+        help="pobierz wszystkie modele z góry i zakończ",
+    )
     parser.add_argument("--faces-dir", help="katalog z osobami referencyjnymi: Imie_Nazwisko/*.jpg")
     parser.add_argument("--keyframes-dir", default="keyframes_out", help="gdzie zapisać klatki z wideo")
     parser.add_argument(
@@ -60,6 +69,13 @@ def print_summary(report: Report, saved_to: Path) -> None:
     print(f"Raport zapisany: {saved_to}")
 
 
+def download_models(orchestrator: Orchestrator) -> int:
+    statuses = orchestrator.prefetch()
+    for name, status in statuses.items():
+        print(f"{name:<20}{status}")
+    return 0 if all(status == "ok" for status in statuses.values()) else 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -69,9 +85,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         text = collect_text(args.text, args.text_file)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
-
-    if not any([args.url, text, args.image, args.video, args.audio]):
-        parser.error("podaj co najmniej jedno z: --url, --text, --text-file, --image, --video, --audio")
 
     config = OrchestratorConfig(
         use_gpu=args.gpu,
@@ -83,7 +96,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         whisper_model=args.whisper_model,
         speech_language=args.speech_language,
         spectrograms_dir=args.spectrograms_dir,
+        models_dir=args.models_dir,
     )
+    if args.download_models:
+        return download_models(Orchestrator(config))
+
+    if not any([args.url, text, args.image, args.video, args.audio]):
+        parser.error("podaj co najmniej jedno z: --url, --text, --text-file, --image, --video, --audio")
+
     report = Orchestrator(config).run(
         url=args.url, text=text, image=args.image, video=args.video, audio=args.audio
     )

@@ -5,6 +5,8 @@ from PIL import Image
 from sentence_transformers import SentenceTransformer
 from typing import List, Sequence, TypeAlias, TypedDict
 
+from .model_cache import HUGGINGFACE, model_dir
+
 EmbeddingVector: TypeAlias = List[float]
 
 
@@ -69,14 +71,21 @@ class ImageHasher:
 
 
 class VisualEmbedder:
-    def __init__(self, model_name: str = "clip-ViT-B-32", device: str | None = None):
+    def __init__(
+        self,
+        model_name: str = "clip-ViT-B-32",
+        device: str | None = None,
+        models_dir: str | None = None,
+    ):
         """
         Embeddingi CLIP przez sentence-transformers. Łapią wspólny szablon reklamy
         (np. fałszywy baner TVP Info), nawet gdy zdjęcie w środku jest inne.
         SigLIP trzeba ładować inaczej (przez transformers), tu go nie ma.
         """
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name, device=device)
+        self.model = SentenceTransformer(
+            model_name, device=device, cache_folder=str(model_dir(HUGGINGFACE, models_dir))
+        )
 
     def extract_embedding(self, image_path: str) -> EmbeddingVector:
         return self.extract_embeddings([image_path])[0]

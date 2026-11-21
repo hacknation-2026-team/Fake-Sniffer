@@ -404,5 +404,79 @@ def test_speech_extractor_is_built_from_config():
     with patch("feature_extractor.speech_extractor.SpeechExtractor") as speech_cls:
         speech = Orchestrator(config).speech
 
-    speech_cls.assert_called_once_with(model_name="small", language="pl", device="cuda")
+    speech_cls.assert_called_once_with(model_name="small", language="pl", device="cuda", models_dir=None)
     assert speech is speech_cls.return_value
+
+
+def prefetch_mocks():
+    return {
+        "ocr": MagicMock(),
+        "text_embedder": MagicMock(),
+        "entity_extractor": MagicMock(),
+        "visual_embedder": MagicMock(),
+        "faces": MagicMock(),
+        "speech": MagicMock(),
+        "web_extractor": MagicMock(),
+    }
+
+
+def test_prefetch_loads_every_model_and_the_browser():
+    mocks = prefetch_mocks()
+
+    statuses = make_orchestrator(**mocks).prefetch()
+
+    assert statuses == {
+        "ocr": "ok",
+        "text_embedder": "ok",
+        "entity_extractor": "ok",
+        "visual_embedder": "ok",
+        "faces": "ok",
+        "speech": "ok",
+        "browser": "ok",
+    }
+    mocks["web_extractor"].ensure_browser.assert_called_once_with()
+
+
+def test_prefetch_reports_failures_without_stopping():
+    mocks = prefetch_mocks()
+    mocks["web_extractor"].ensure_browser.side_effect = OSError("brak sieci")
+
+    class WithoutFaces(Orchestrator):
+        @property
+        def faces(self):
+            raise RuntimeError("nie da się pobrać buffalo_l")
+
+    orchestrator = WithoutFaces()
+    for name, mock in mocks.items():
+        if name != "faces":
+            setattr(orchestrator, name, mock)
+
+    statuses = orchestrator.prefetch()
+
+    assert statuses["faces"] == "RuntimeError: nie da się pobrać buffalo_l"
+    assert statuses["browser"] == "OSError: brak sieci"
+    assert statuses["speech"] == "ok"
+    assert list(statuses)[-1] == "browser"
+
+
+def test_models_dir_is_passed_to_every_extractor_that_downloads():
+    from unittest.mock import patch
+
+    orchestrator = Orchestrator(OrchestratorConfig(models_dir="moje_modele", use_gpu=False))
+    targets = {
+        "ocr": "feature_extractor.ocr_text_extractor.TextExtractor",
+        "text_embedder": "feature_extractor.text_chunk_embedder.DocumentEmbedder",
+        "visual_embedder": "feature_extractor.visual_feature_extractor.VisualEmbedder",
+        "faces": "feature_extractor.face_identity_extractor.FaceIdentityExtractor",
+        "speech": "feature_extractor.speech_extractor.SpeechExtractor",
+        "web_extractor": "feature_extractor.web_infrastructure_extractor.WebInfrastructureExtractor",
+    }
+    for attribute, target in targets.items():
+        with patch(target) as constructor:
+            getattr(orchestrator, attribute)
+        passed = list(constructor.call_args[0]) + list(constructor.call_args[1].values())
+        assert "moje_modele" in passed, attribute
+
+
+def test_models_dir_defaults_to_none():
+    assert OrchestratorConfig().models_dir is None

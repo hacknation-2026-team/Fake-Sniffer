@@ -1,6 +1,8 @@
 import easyocr
 import os
-from typing import List, Union, TypedDict, TypeAlias
+from typing import List, Optional, Union, TypedDict, TypeAlias
+
+from .model_cache import EASYOCR, model_dir
 
 # lista 4 punktów [x, y]
 Point: TypeAlias = List[Union[int, float]]
@@ -12,16 +14,26 @@ class OCRResultDict(TypedDict):
     bbox: BoundingBox
 
 class TextExtractor:
-    def __init__(self, languages: List[str] = ['pl', 'en'], use_gpu: bool = True):
+    def __init__(
+        self,
+        languages: List[str] = ['pl', 'en'],
+        use_gpu: bool = True,
+        models_dir: Optional[str] = None,
+    ):
         """
         Inicjalizuje czytnik EasyOCR.
-        
+
         :param languages: Lista kodów języków do rozpoznawania (domyślnie polski i angielski).
         :param use_gpu: Czy używać karty graficznej (CUDA) do przyspieszenia obliczeń.
+        :param models_dir: Gdzie trzymać modele; brakujące pobiera się przy pierwszym uruchomieniu.
         """
         self.languages = languages
         self.use_gpu = use_gpu
-        self.reader = easyocr.Reader(self.languages, gpu=self.use_gpu)
+        self.reader = easyocr.Reader(
+            self.languages,
+            gpu=self.use_gpu,
+            model_storage_directory=str(model_dir(EASYOCR, models_dir)),
+        )
 
     def _validate_image(self, image_path: str) -> None:
         """Sprawdza, czy plik istnieje przed próbą odczytu."""

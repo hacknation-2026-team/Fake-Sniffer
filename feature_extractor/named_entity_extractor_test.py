@@ -152,3 +152,28 @@ def test_real_model_finds_politician_and_custom_brand():
 
     assert ("BRAND", "baltic pipeline") in labels
     assert any(label == "persName" and "tusk" in lemma for label, lemma in labels)
+
+
+def test_missing_model_is_downloaded_then_loaded():
+    nlp = MagicMock()
+    with patch("feature_extractor.named_entity_extractor.spacy.load", side_effect=[OSError("E050"), nlp]) as load, \
+         patch("feature_extractor.named_entity_extractor.download_spacy_model") as download:
+        extractor = NamedEntityExtractor(model_name="pl_core_news_sm")
+
+    download.assert_called_once_with("pl_core_news_sm")
+    assert load.call_count == 2
+    assert extractor.nlp is nlp
+
+
+def test_installed_model_is_not_downloaded(mock_nlp):
+    with patch("feature_extractor.named_entity_extractor.download_spacy_model") as download:
+        NamedEntityExtractor()
+    download.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [SystemExit(1), RuntimeError("brak pip")])
+def test_failed_download_gives_actionable_error(failure):
+    with patch("feature_extractor.named_entity_extractor.spacy.load", side_effect=OSError("E050")), \
+         patch("feature_extractor.named_entity_extractor.download_spacy_model", side_effect=failure):
+        with pytest.raises(RuntimeError, match="python -m spacy download pl_core_news_lg"):
+            NamedEntityExtractor()

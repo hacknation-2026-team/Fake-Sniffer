@@ -1,4 +1,6 @@
+import importlib
 import spacy
+from spacy.cli import download as download_spacy_model
 from typing import Dict, FrozenSet, Iterable, List, Sequence, Set, Tuple, TypedDict
 
 
@@ -26,9 +28,12 @@ class NamedEntityExtractor:
 
         extra_patterns to własne frazy (np. znane fałszywe platformy). Są dopasowywane bez
         względu na wielkość liter i mają pierwszeństwo przed predykcją modelu.
+
+        Model spaCy to pakiet pip, więc `uv sync` instaluje go z góry. Gdyby go brakowało,
+        konstruktor próbuje go pobrać i zainstalować.
         """
         self.model_name = model_name
-        self.nlp = spacy.load(model_name)
+        self.nlp = self._load_model(model_name)
         self.extra_patterns: List[EntityPattern] = list(extra_patterns or [])
 
         if self.extra_patterns:
@@ -41,6 +46,22 @@ class NamedEntityExtractor:
             ruler.add_patterns(
                 [{"label": label, "pattern": pattern} for label, pattern in self.extra_patterns]
             )
+
+    @staticmethod
+    def _load_model(model_name: str) -> spacy.language.Language:
+        try:
+            return spacy.load(model_name)
+        except OSError:
+            pass
+        try:
+            download_spacy_model(model_name)
+        except (SystemExit, Exception) as exc:
+            raise RuntimeError(
+                f"Brak modelu spaCy {model_name} i nie udało się go pobrać. "
+                f"Zainstaluj go ręcznie: python -m spacy download {model_name}"
+            ) from exc
+        importlib.invalidate_caches()
+        return spacy.load(model_name)
 
     def extract_entities(
         self,

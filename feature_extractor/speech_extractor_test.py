@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from feature_extractor.model_cache import WHISPER, model_dir
 from feature_extractor.speech_extractor import SAMPLE_RATE, SpeechExtractor, load_audio, sha256_file
 
 
@@ -72,7 +73,21 @@ def test_loads_default_model_for_device(device, expected_model):
         extractor = SpeechExtractor(device=device)
 
     assert extractor.model_name == expected_model
-    mock_load.assert_called_once_with(expected_model, device=device)
+    mock_load.assert_called_once_with(
+        expected_model, device=device, download_root=str(model_dir(WHISPER))
+    )
+
+
+def test_whisper_downloads_into_requested_directory(tmp_path):
+    with patch("whisper.load_model") as mock_load:
+        SpeechExtractor(device="cpu", models_dir=str(tmp_path / "m"))
+    assert mock_load.call_args[1]["download_root"] == str(tmp_path / "m" / "whisper")
+
+
+def test_api_backend_does_not_create_model_directory(tmp_path):
+    with patch("openai.OpenAI"):
+        SpeechExtractor(backend="api", models_dir=str(tmp_path / "m"))
+    assert not (tmp_path / "m").exists()
 
 
 def test_api_backend_creates_openai_client():

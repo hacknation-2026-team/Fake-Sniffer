@@ -2,9 +2,12 @@ import dns.exception
 import dns.resolver
 import hashlib
 import ipaddress
+import os
 import requests
 import socket
 import ssl
+import subprocess
+import sys
 import tldextract
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -12,11 +15,19 @@ from cryptography.x509.oid import NameOID
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
 from urllib.parse import urlparse
 
+from .model_cache import PLAYWRIGHT, model_dir
+
 _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+
+
+def install_chromium() -> None:
+    """Pobiera Chromium dla Playwrighta do katalogu z PLAYWRIGHT_BROWSERS_PATH."""
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
 
 
 RDAP_URL_TEMPLATES: Dict[str, str] = {"pl": "https://rdap.dns.pl/domain/{domain}"}
@@ -166,6 +177,7 @@ class WebInfrastructureExtractor:
         timeout: float = 10.0,
         user_agent: str = DEFAULT_USER_AGENT,
         settle_ms: int = 1500,
+        models_dir: Optional[str] = None,
     ):
         """
         Ślady infrastrukturalne strony: przekierowania, odcisk DOM, RDAP, DNS/ASN i certyfikat TLS.
@@ -173,13 +185,34 @@ class WebInfrastructureExtractor:
 
         timeout to limit pojedynczego zapytania (s), user_agent ma wyglądać jak zwykła przeglądarka
         (część cloakerów serwuje botom inną treść), a settle_ms to dodatkowe czekanie na
-        przekierowania z JavaScriptu po załadowaniu strony.
+        przekierowania z JavaScriptu po załadowaniu strony. Chromium pobiera się samo przy
+        pierwszym użyciu do models_dir (o ile nie ustawiono PLAYWRIGHT_BROWSERS_PATH).
 
         Strony oszustów odpalają się w prawdziwej przeglądarce, więc rób to w kontenerze lub VM.
         """
         self.timeout = timeout
         self.user_agent = user_agent
         self.settle_ms = settle_ms
+        self.models_dir = models_dir
+
+    def _use_browser_cache(self) -> None:
+        if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(model_dir(PLAYWRIGHT, self.models_dir))
+
+    def _launch_browser(self, playwright: Any) -> Any:
+        try:
+            return playwright.chromium.launch(headless=True)
+        except PlaywrightError as exc:
+            if "Executable doesn't exist" not in str(exc):
+                raise
+        install_chromium()
+        return playwright.chromium.launch(headless=True)
+
+    def ensure_browser(self) -> None:
+        """Uruchamia i zamyka przeglądarkę, pobierając ją, jeśli jeszcze jej nie ma."""
+        self._use_browser_cache()
+        with sync_playwright() as playwright:
+            self._launch_browser(playwright).close()
 
     # --- URL i domena ---
 
@@ -216,8 +249,9 @@ class WebInfrastructureExtractor:
         self.validate_url(url)
         hops: List[RedirectHop] = []
 
+        self._use_browser_cache()
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            browser = self._launch_browser(playwright)
             try:
   
                 context = browser.new_context(user_agent=self.user_agent, ignore_https_errors=True)

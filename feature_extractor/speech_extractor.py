@@ -9,6 +9,8 @@ import warnings
 import wave
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypeAlias, TypedDict
 
+from .model_cache import WHISPER, model_dir
+
 Backend: TypeAlias = Literal["local", "api"]
 
 SAMPLE_RATE = 16_000
@@ -110,6 +112,7 @@ class SpeechExtractor:
         backend: Backend = "local",
         language: Optional[str] = None,
         device: Optional[str] = None,
+        models_dir: Optional[str] = None,
     ):
         if backend not in ("local", "api"):
             raise ValueError(f"Nieznany backend: {backend!r} (dostępne: local, api)")
@@ -124,7 +127,11 @@ class SpeechExtractor:
         if backend == "local":
             import whisper
 
-            self.model = whisper.load_model(self.model_name, device=self.device)
+            self.model = whisper.load_model(
+                self.model_name,
+                device=self.device,
+                download_root=str(model_dir(WHISPER, models_dir)),
+            )
         else:
             from openai import OpenAI
 

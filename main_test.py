@@ -154,3 +154,32 @@ def test_exit_code_is_one_when_a_step_failed(tmp_path, capsys):
 def test_partial_step_does_not_fail_the_run(tmp_path):
     FakeOrchestrator.steps = [StepResult("web_infrastructure", "url", "partial", 1.0, {}, "tls: timeout")]
     assert main.main(["--url", "https://a.pl", "--out", str(tmp_path / "r.json")]) == 0
+
+
+def test_models_dir_is_mapped_to_config(tmp_path):
+    main.main(["--text", "x", "--models-dir", "moje_modele", "--out", str(tmp_path / "r.json")])
+    assert FakeOrchestrator.instances[0].config.models_dir == "moje_modele"
+
+
+def test_download_models_needs_no_other_input(capsys):
+    FakeOrchestrator.prefetch = lambda self: {"ocr": "ok", "browser": "ok"}
+
+    code = main.main(["--download-models"])
+
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "ocr" in printed and "browser" in printed
+    assert FakeOrchestrator.instances[0].calls == []
+
+
+def test_download_models_returns_one_when_something_failed(capsys):
+    FakeOrchestrator.prefetch = lambda self: {"ocr": "ok", "faces": "RuntimeError: brak sieci"}
+
+    assert main.main(["--download-models"]) == 1
+    assert "RuntimeError: brak sieci" in capsys.readouterr().out
+
+
+def test_download_models_respects_models_dir():
+    FakeOrchestrator.prefetch = lambda self: {"ocr": "ok"}
+    main.main(["--download-models", "--models-dir", "dysk"])
+    assert FakeOrchestrator.instances[0].config.models_dir == "dysk"

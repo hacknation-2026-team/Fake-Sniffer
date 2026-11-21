@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from feature_extractor.face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
+from feature_extractor.model_cache import INSIGHTFACE, model_dir
 
 
 def unit(*values) -> np.ndarray:
@@ -50,8 +51,16 @@ def test_initialization_passes_providers_and_ctx(mock_app, use_gpu, providers, c
     mock_cls, instance = mock_app
     FaceIdentityExtractor(use_gpu=use_gpu, det_size=(320, 320))
 
-    mock_cls.assert_called_once_with(name="buffalo_l", providers=providers)
+    mock_cls.assert_called_once_with(
+        name="buffalo_l", root=str(model_dir(INSIGHTFACE)), providers=providers
+    )
     instance.prepare.assert_called_once_with(ctx_id=ctx_id, det_size=(320, 320))
+
+
+def test_models_are_stored_in_requested_directory(mock_app, tmp_path):
+    mock_cls, _ = mock_app
+    FaceIdentityExtractor(use_gpu=False, models_dir=str(tmp_path / "m"))
+    assert mock_cls.call_args[1]["root"] == str(tmp_path / "m" / "insightface")
 
 
 # --- extract_faces ---

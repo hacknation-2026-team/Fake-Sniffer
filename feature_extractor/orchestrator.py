@@ -46,6 +46,7 @@ class OrchestratorConfig:
     speech_language: Optional[str] = None
     spectrograms_dir: Optional[str] = None
     include_vectors: bool = True
+    models_dir: Optional[str] = None
 
 
 @dataclass
@@ -137,7 +138,7 @@ class Orchestrator:
     def ocr(self) -> TextExtractor:
         from .ocr_text_extractor import TextExtractor
 
-        return TextExtractor(self.config.ocr_languages, self.config.use_gpu)
+        return TextExtractor(self.config.ocr_languages, self.config.use_gpu, self.config.models_dir)
 
     @cached_property
     def text_embedder(self) -> DocumentEmbedder:
@@ -147,6 +148,7 @@ class Orchestrator:
             model_name=self.config.embedder_model,
             device=self._device,
             prefixes=self.config.embedder_prefixes,
+            models_dir=self.config.models_dir,
         )
 
     @cached_property
@@ -165,13 +167,15 @@ class Orchestrator:
     def visual_embedder(self) -> VisualEmbedder:
         from .visual_feature_extractor import VisualEmbedder
 
-        return VisualEmbedder(self.config.clip_model, device=self._device)
+        return VisualEmbedder(
+            self.config.clip_model, device=self._device, models_dir=self.config.models_dir
+        )
 
     @cached_property
     def faces(self) -> FaceIdentityExtractor:
         from .face_identity_extractor import FaceIdentityExtractor
 
-        return FaceIdentityExtractor(use_gpu=self.config.use_gpu)
+        return FaceIdentityExtractor(use_gpu=self.config.use_gpu, models_dir=self.config.models_dir)
 
     @cached_property
     def face_database(self) -> Optional[ReferenceFaceDatabase]:
@@ -201,7 +205,7 @@ class Orchestrator:
     def web_extractor(self) -> WebInfrastructureExtractor:
         from .web_infrastructure_extractor import WebInfrastructureExtractor
 
-        return WebInfrastructureExtractor()
+        return WebInfrastructureExtractor(models_dir=self.config.models_dir)
 
     @cached_property
     def speech(self) -> SpeechExtractor:
@@ -211,6 +215,7 @@ class Orchestrator:
             model_name=self.config.whisper_model,
             language=self.config.speech_language,
             device=self._device,
+            models_dir=self.config.models_dir,
         )
 
     @cached_property
@@ -236,6 +241,26 @@ class Orchestrator:
         from .audio_feature_extractor import AudioFeatureExtractor
 
         return AudioFeatureExtractor(self.speech, self.spectrogram, self.sentence_rhythm)
+
+    def prefetch(self) -> Dict[str, str]:
+        """Pobiera wszystkie modele z góry. Zwraca status każdego: "ok" albo opis błędu."""
+        loaders: Dict[str, Callable[[], Any]] = {
+            "ocr": lambda: self.ocr,
+            "text_embedder": lambda: self.text_embedder,
+            "entity_extractor": lambda: self.entity_extractor,
+            "visual_embedder": lambda: self.visual_embedder,
+            "faces": lambda: self.faces,
+            "speech": lambda: self.speech,
+            "browser": lambda: self.web_extractor.ensure_browser(),
+        }
+        statuses: Dict[str, str] = {}
+        for name, load in loaders.items():
+            try:
+                load()
+                statuses[name] = "ok"
+            except Exception as exc:
+                statuses[name] = f"{type(exc).__name__}: {exc}"
+        return statuses
 
     def run(
         self,

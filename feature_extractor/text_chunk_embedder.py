@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer
 from typing import Dict, List, Literal, TypeAlias
 
+from .model_cache import HUGGINGFACE, model_dir
+
 EmbeddingVector: TypeAlias = List[float]
 InputType: TypeAlias = Literal["query", "passage", "raw"]
 SourceType: TypeAlias = Literal["ocr", "webpage", "transcript", "unknown"]
@@ -27,6 +29,7 @@ class DocumentEmbedder:
         target_words_per_chunk: int = 180,
         overlap_sentences: int = 1,
         prefixes: Dict[str, str] | None = None,
+        models_dir: str | None = None,
     ) -> None:
         """
         Embeddingi dla długich i krótkich źródeł (OCR, WWW, transkrypty). Każdy logiczny
@@ -37,7 +40,9 @@ class DocumentEmbedder:
         "zapytanie: " dla zapytań i nic dla pasaży: {"query": "zapytanie: ", "passage": ""}.
         """
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name, device=device)
+        self.model = SentenceTransformer(
+            model_name, device=device, cache_folder=str(model_dir(HUGGINGFACE, models_dir))
+        )
         self.model.max_seq_length = max_tokens
         self.target_words_per_chunk = target_words_per_chunk
         self.overlap_sentences = overlap_sentences

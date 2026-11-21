@@ -4,6 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from unittest.mock import MagicMock, patch
 
+from feature_extractor.model_cache import HUGGINGFACE, model_dir
 from feature_extractor.visual_feature_extractor import ImageHasher, VisualEmbedder
 
 
@@ -116,7 +117,15 @@ def mock_clip():
 def test_embedder_passes_model_and_device(mock_clip):
     mock_cls, _ = mock_clip
     VisualEmbedder(model_name="clip-ViT-L-14", device="cpu")
-    mock_cls.assert_called_once_with("clip-ViT-L-14", device="cpu")
+    mock_cls.assert_called_once_with(
+        "clip-ViT-L-14", device="cpu", cache_folder=str(model_dir(HUGGINGFACE))
+    )
+
+
+def test_embedder_downloads_into_requested_directory(mock_clip, tmp_path):
+    mock_cls, _ = mock_clip
+    VisualEmbedder(models_dir=str(tmp_path / "m"))
+    assert mock_cls.call_args[1]["cache_folder"] == str(tmp_path / "m" / "huggingface")
 
 
 def test_extract_embeddings_batch(mock_clip, banner_files):

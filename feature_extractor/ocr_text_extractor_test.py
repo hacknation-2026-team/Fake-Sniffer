@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from feature_extractor.model_cache import EASYOCR, model_dir
 from feature_extractor.ocr_text_extractor import TextExtractor
 
 
@@ -32,7 +33,18 @@ def test_extractor_initialization():
         
         assert extractor.languages == ["pl", "de"]
         assert extractor.use_gpu is False
-        mock_cls.assert_called_once_with(["pl", "de"], gpu=False)
+        mock_cls.assert_called_once_with(
+            ["pl", "de"], gpu=False, model_storage_directory=str(model_dir(EASYOCR))
+        )
+
+
+def test_models_are_stored_in_requested_directory(tmp_path):
+    target = tmp_path / "moje_modele"
+    with patch("feature_extractor.ocr_text_extractor.easyocr.Reader") as mock_cls:
+        TextExtractor(use_gpu=False, models_dir=str(target))
+
+    assert mock_cls.call_args[1]["model_storage_directory"] == str(target / "easyocr")
+    assert (target / "easyocr").is_dir()
 
 
 def test_file_not_found_raises_error(mock_reader):

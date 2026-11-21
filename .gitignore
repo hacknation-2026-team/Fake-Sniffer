@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Modele i artefakty
+models/
+keyframes_out/
+.pytest_cache/

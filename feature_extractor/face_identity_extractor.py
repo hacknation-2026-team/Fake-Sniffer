@@ -4,6 +4,8 @@ import os
 from insightface.app import FaceAnalysis
 from typing import Dict, List, Optional, Sequence, Tuple, TypeAlias, TypedDict
 
+from .model_cache import INSIGHTFACE, model_dir
+
 EmbeddingVector: TypeAlias = List[float]
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -80,10 +82,12 @@ class FaceIdentityExtractor:
         use_gpu: bool = True,
         det_size: Tuple[int, int] = (640, 640),
         min_det_score: float = 0.5,
+        models_dir: Optional[str] = None,
     ):
         """
         Detekcja twarzy i embeddingi ArcFace przez InsightFace. Większe det_size wykrywa
-        mniejsze twarze, ale działa wolniej; GPU wymaga onnxruntime-gpu.
+        mniejsze twarze, ale działa wolniej; GPU wymaga onnxruntime-gpu. Brakujące modele
+        pobierają się do models_dir przy pierwszym uruchomieniu.
 
         Licencja: modele InsightFace (w tym buffalo_l) są tylko do użytku niekomercyjnego.
         """
@@ -97,7 +101,11 @@ class FaceIdentityExtractor:
             if use_gpu
             else ["CPUExecutionProvider"]
         )
-        self.app = FaceAnalysis(name=model_name, providers=providers)
+        self.app = FaceAnalysis(
+            name=model_name,
+            root=str(model_dir(INSIGHTFACE, models_dir)),
+            providers=providers,
+        )
         self.app.prepare(ctx_id=0 if use_gpu else -1, det_size=det_size)
 
     @staticmethod
