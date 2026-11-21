@@ -13,6 +13,10 @@ uv run main.py --video reklama.mp4 --gpu --no-vectors
 uv run main.py --audio nagranie.mp3 --speech-language pl --spectrograms-dir spektrogramy
 ```
 
+## Twarze
+
+Aby z twarzy porównykania korzystać można, należy katalog przygotować dodatkowy, jego nazwę w parametrze `faces-dir` do programu przekazać, a wnętrze wypełnić jego folderami z nazwą osoby której twarz zawierać podfoldery mają po czym do podfolderów próbki twarzy fotograii uzupełnic należy!
+
 ## Modele
 
 Każdy ekstraktor pobiera swój model przy pierwszym użyciu i zapisuje go w katalogu `models/` w repozytorium (podkatalogi: easyocr, huggingface, insightface, whisper, playwright). Kolejne uruchomienia korzystają z dysku. Chromium dla Playwrighta doinstaluje się samo, jeśli go brakuje (na Linuksie mogą być potrzebne biblioteki systemowe: `uv run playwright install-deps chromium`).
