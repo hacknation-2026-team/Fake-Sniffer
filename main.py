@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", help="adres strony do przeanalizowania")
     parser.add_argument("--text", help="tekst podany wprost")
     parser.add_argument("--text-file", type=Path, help="plik tekstowy UTF-8 z tekstem do analizy")
-    parser.add_argument("--image", help="ścieżka do obrazka")
+    parser.add_argument("--image", help="ścieżka do obrazka (jpg, png, webp...)")
     parser.add_argument("--video", help="ścieżka do filmu")
     parser.add_argument("--audio", help="ścieżka do nagrania (mp3, wav, m4a...)")
     parser.add_argument("--out", type=Path, default=Path("report.json"), help="plik raportu JSON")

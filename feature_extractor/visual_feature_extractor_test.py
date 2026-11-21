@@ -92,6 +92,16 @@ def test_rgba_and_grayscale_images_are_accepted(tmp_path):
     assert hasher.compute(str(gray))["phash"]
 
 
+def test_webp_from_path_with_polish_characters_hashes_like_png(tmp_path):
+    folder = tmp_path / "zażółć"
+    folder.mkdir()
+    make_banner(3).save(folder / "baner.png")
+    make_banner(3).save(folder / "baner.webp", lossless=True)
+    hasher = ImageHasher()
+
+    assert hasher.compute(str(folder / "baner.webp")) == hasher.compute(str(folder / "baner.png"))
+
+
 def test_hasher_missing_file_raises():
     with pytest.raises(FileNotFoundError, match="brak.png"):
         ImageHasher().compute("brak.png")

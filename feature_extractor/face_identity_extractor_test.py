@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import cv2
 from pathlib import Path
+from PIL import Image
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -99,6 +100,39 @@ def test_unreadable_image_raises_value_error(mock_app, tmp_path):
         FaceIdentityExtractor(use_gpu=False).extract_faces(str(bad))
 
 
+def test_webp_from_path_with_polish_characters(mock_app, tmp_path):
+    _, instance = mock_app
+    instance.get.return_value = []
+    path = tmp_path / "zażółć" / "reklama.webp"
+    path.parent.mkdir()
+    Image.new("RGB", (40, 30), (255, 0, 0)).save(path, "WEBP", lossless=True)
+
+    FaceIdentityExtractor(use_gpu=False).extract_faces(str(path))
+
+    image = instance.get.call_args[0][0]
+    assert image.shape == (30, 40, 3)
+    assert image[0, 0].tolist() == [0, 0, 255]
+
+
+def test_animated_webp_uses_first_frame(mock_app, tmp_path):
+    _, instance = mock_app
+    instance.get.return_value = []
+    path = tmp_path / "animacja.webp"
+    frames = [Image.new("RGB", (40, 30), color) for color in ((0, 255, 0), (0, 0, 255))]
+    frames[0].save(path, "WEBP", save_all=True, append_images=frames[1:], lossless=True)
+
+    FaceIdentityExtractor(use_gpu=False).extract_faces(str(path))
+
+    assert instance.get.call_args[0][0][0, 0].tolist() == [0, 255, 0]
+
+
+def test_empty_file_raises_value_error(mock_app, tmp_path):
+    empty = tmp_path / "pusty.webp"
+    empty.write_bytes(b"")
+    with pytest.raises(ValueError, match="odczytać"):
+        FaceIdentityExtractor(use_gpu=False).extract_faces(str(empty))
+
+
 # --- ReferenceFaceDatabase ---
 
 def test_database_identifies_best_match_above_threshold():
@@ -161,6 +195,17 @@ def test_build_reference_database_from_directory(mock_app, tmp_path):
 def test_build_reference_database_missing_dir_raises(mock_app):
     with pytest.raises(FileNotFoundError):
         FaceIdentityExtractor(use_gpu=False).build_reference_database("/nie/ma/takiego")
+
+
+def test_build_reference_database_with_polish_names_and_webp(mock_app, tmp_path):
+    _, instance = mock_app
+    (tmp_path / "Rafał_Brzoska").mkdir()
+    Image.new("RGB", (16, 16)).save(tmp_path / "Rafał_Brzoska" / "zdjęcie.webp", "WEBP")
+    instance.get.return_value = [fake_face([0, 0, 10, 10], 0.99, unit(1, 0, 0))]
+
+    db = FaceIdentityExtractor(use_gpu=False).build_reference_database(str(tmp_path))
+
+    assert db.names == ["Rafał Brzoska"]
 
 
 def test_identify_faces_attaches_identity(mock_app, sample_image):

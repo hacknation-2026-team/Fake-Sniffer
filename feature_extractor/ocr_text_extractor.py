@@ -40,6 +40,11 @@ class TextExtractor:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Nie znaleziono pliku pod ścieżką: {image_path}")
 
+    def _read_image(self, image_path: str) -> bytes:
+        self._validate_image(image_path)
+        with open(image_path, "rb") as file:
+            return file.read()
+
     def extract_text(self, image_path: str, join_lines: bool = True) -> Union[str, List[str]]:
         """
         Odczytuje sam tekst z obrazu.
@@ -49,10 +54,10 @@ class TextExtractor:
                            Jeśli False, zwraca listę wykrytych fragmentów tekstu.
         :return: Wyodrębniony tekst.
         """
-        self._validate_image(image_path)
+        image = self._read_image(image_path)
         
         # detail=0 zwraca wyłącznie rozpoznany tekst bez współrzędnych ramek
-        results = self.reader.readtext(image_path, detail=0)
+        results = self.reader.readtext(image, detail=0)
         
         if join_lines:
             return "\n".join(results)
@@ -66,8 +71,8 @@ class TextExtractor:
         :param min_confidence: Minimalny próg pewności (od 0.0 do 1.0), poniżej którego wyniki są odrzucane.
         :return: Lista słowników zawierających tekst, pewność i współrzędne.
         """
-        self._validate_image(image_path)
-        raw_results = self.reader.readtext(image_path, detail=1)
+        image = self._read_image(image_path)
+        raw_results = self.reader.readtext(image, detail=1)
         
         parsed_results: List[OCRResultDict] = []
         for bbox, text, confidence in raw_results:

@@ -1,6 +1,8 @@
+import cv2
 import pytest
 import numpy as np
 from pathlib import Path
+from PIL import Image
 from unittest.mock import MagicMock, patch
 
 from feature_extractor.model_cache import EASYOCR, model_dir
@@ -71,8 +73,22 @@ def test_extract_text(mock_reader, sample_image, join_lines, expected_output):
 
     result = extractor.extract_text(sample_image, join_lines=join_lines)
 
-    mock_reader.readtext.assert_called_once_with(sample_image, detail=0)
+    mock_reader.readtext.assert_called_once_with(b"fake_image_data", detail=0)
     assert result == expected_output
+
+
+def test_webp_from_path_with_polish_characters_is_passed_as_bytes(mock_reader, tmp_path):
+    path = tmp_path / "zażółć gęślą" / "reklama.webp"
+    path.parent.mkdir()
+    Image.new("RGB", (32, 16), (255, 255, 255)).save(path, "WEBP")
+    mock_reader.readtext.return_value = ["Zarób 5000 zł"]
+
+    text = TextExtractor().extract_text(str(path))
+
+    image = mock_reader.readtext.call_args[0][0]
+    assert text == "Zarób 5000 zł"
+    assert image == path.read_bytes()
+    assert cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR).shape == (16, 32, 3)
 
 
 # --- TESTY METODY extract_with_details ---
@@ -98,7 +114,7 @@ def test_extract_with_details_structure_and_types(mock_reader, sample_image):
     extractor = TextExtractor()
     results = extractor.extract_with_details(sample_image)
 
-    mock_reader.readtext.assert_called_once_with(sample_image, detail=1)
+    mock_reader.readtext.assert_called_once_with(b"fake_image_data", detail=1)
     assert len(results) == 1
     
     item = results[0]

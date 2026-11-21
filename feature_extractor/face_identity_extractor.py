@@ -112,7 +112,8 @@ class FaceIdentityExtractor:
     def _load_bgr(image_path: str) -> np.ndarray:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Nie znaleziono pliku pod ścieżką: {image_path}")
-        image = cv2.imread(image_path)  # InsightFace oczekuje BGR
+        data = np.fromfile(image_path, dtype=np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None  # InsightFace oczekuje BGR
         if image is None:
             raise ValueError(f"Nie udało się odczytać obrazu: {image_path}")
         return image
