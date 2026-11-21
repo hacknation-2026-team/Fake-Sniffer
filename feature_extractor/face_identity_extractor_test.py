@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
+from feature_extractor.face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
 
 
 def unit(*values) -> np.ndarray:
@@ -24,7 +24,7 @@ def fake_face(bbox, score, embedding):
 @pytest.fixture
 def mock_app():
     """Podmienia insightface FaceAnalysis atrapą - bez pobierania modeli buffalo_l."""
-    with patch("face_identity_extractor.FaceAnalysis") as mock_cls:
+    with patch("feature_extractor.face_identity_extractor.FaceAnalysis") as mock_cls:
         instance = MagicMock()
         mock_cls.return_value = instance
         yield mock_cls, instance

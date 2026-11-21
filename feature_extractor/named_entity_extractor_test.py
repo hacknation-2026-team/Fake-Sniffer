@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from named_entity_extractor import NamedEntityExtractor
+from feature_extractor.named_entity_extractor import NamedEntityExtractor
 
 
 def make_ent(text, label, lemma, start, end):
@@ -12,7 +12,7 @@ def make_ent(text, label, lemma, start, end):
 @pytest.fixture
 def mock_nlp():
     """Podmienia spacy.load na atrapę - testy nie ładują modelu pl_core_news_lg."""
-    with patch("named_entity_extractor.spacy.load") as mock_load:
+    with patch("feature_extractor.named_entity_extractor.spacy.load") as mock_load:
         nlp = MagicMock()
         mock_load.return_value = nlp
         yield nlp
@@ -25,7 +25,7 @@ def set_entities(nlp, ents):
 # --- INICJALIZACJA ---
 
 def test_loads_requested_model(mock_nlp):
-    with patch("named_entity_extractor.spacy.load", return_value=mock_nlp) as mock_load:
+    with patch("feature_extractor.named_entity_extractor.spacy.load", return_value=mock_nlp) as mock_load:
         NamedEntityExtractor(model_name="pl_core_news_sm")
     mock_load.assert_called_once_with("pl_core_news_sm")
 

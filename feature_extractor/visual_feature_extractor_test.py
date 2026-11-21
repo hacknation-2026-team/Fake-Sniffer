@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from unittest.mock import MagicMock, patch
 
-from visual_feature_extractor import ImageHasher, VisualEmbedder
+from feature_extractor.visual_feature_extractor import ImageHasher, VisualEmbedder
 
 
 def make_banner(seed: int, size=(320, 200)) -> Image.Image:
@@ -101,7 +101,7 @@ def test_hasher_missing_file_raises():
 @pytest.fixture
 def mock_clip():
     """Podmienia SentenceTransformer atrapą zwracającą znormalizowane wektory 4-wymiarowe."""
-    with patch("visual_feature_extractor.SentenceTransformer") as mock_cls:
+    with patch("feature_extractor.visual_feature_extractor.SentenceTransformer") as mock_cls:
         instance = MagicMock()
 
         def fake_encode(images, **kwargs):

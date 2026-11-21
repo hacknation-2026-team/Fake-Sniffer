@@ -4,10 +4,10 @@ import numpy as np
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 if TYPE_CHECKING: 
-    from face_identity_extractor import FaceIdentityExtractor
-    from keyframe_extractor import LightweightKeyframeExtractor
-    from ocr_text_extractor import TextExtractor
-    from visual_feature_extractor import ImageHasher, VisualEmbedder
+    from .face_identity_extractor import FaceIdentityExtractor
+    from .keyframe_extractor import LightweightKeyframeExtractor
+    from .ocr_text_extractor import TextExtractor
+    from .visual_feature_extractor import ImageHasher, VisualEmbedder
 
 
 class VideoFeatureExtractor:
@@ -84,7 +84,7 @@ def shared_scene_ratio(dhashes_a: Sequence[str], dhashes_b: Sequence[str], max_d
     Wychwytuje przemontowania, zmianę kolejności i dołożone wstawki, na których porównanie
     całych filmów zawodzi. Zwraca 0.0, gdy któryś film nie ma klatek.
     """
-    from visual_feature_extractor import ImageHasher
+    from .visual_feature_extractor import ImageHasher
 
     if not dhashes_a or not dhashes_b:
         return 0.0

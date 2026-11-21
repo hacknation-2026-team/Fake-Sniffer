@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from text_chunk_embedder import DocumentEmbedder, EmbeddedChunk
+from feature_extractor.text_chunk_embedder import DocumentEmbedder, EmbeddedChunk
 
 
 # =====================================================================
@@ -12,7 +12,7 @@ from text_chunk_embedder import DocumentEmbedder, EmbeddedChunk
 @pytest.fixture
 def mock_st_model():
     """Podmienia SentenceTransformer na atrapę zwracającą deterministyczne wektory jednostkowe."""
-    with patch("text_chunk_embedder.SentenceTransformer") as mock_cls:
+    with patch("feature_extractor.text_chunk_embedder.SentenceTransformer") as mock_cls:
         mock_instance = MagicMock()
 
         def fake_encode(sentences, **kwargs):

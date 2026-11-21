@@ -27,6 +27,8 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
+_HIDDEN_TEXT_TAGS = {"script", "style", "noscript", "template", "svg"}
+
 _VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input",
     "link", "meta", "param", "source", "track", "wbr",
@@ -85,6 +87,7 @@ class InfrastructureReport:
     final_url: Optional[str] = None
     redirect_chain: List[RedirectHop] = field(default_factory=list)
     dom_fingerprint: Optional[DomFingerprint] = None
+    page_text: Optional[str] = None
     rdap: Optional[RdapInfo] = None
     dns: Optional[DnsInfo] = None
     tls: Optional[CertInfo] = None
@@ -117,7 +120,6 @@ class _StructureParser(HTMLParser):
         self.paths.append("/".join([*self.stack, label]))
 
         if tag not in _VOID_TAGS:
-            
             self.stack.append(tag)
 
     def handle_startendtag(self, tag: str, attrs: Sequence[tuple]) -> None:
@@ -127,10 +129,30 @@ class _StructureParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self.stack:
-
             while self.stack:
                 if self.stack.pop() == tag:
                     break
+
+
+class _VisibleTextParser(HTMLParser):
+    """Zbiera tekst widoczny na stronie, bez skryptów i stylów."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hidden_depth = 0
+        self.chunks: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: Sequence[tuple]) -> None:
+        if tag in _HIDDEN_TEXT_TAGS:
+            self.hidden_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HIDDEN_TEXT_TAGS and self.hidden_depth:
+            self.hidden_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden_depth and data.strip():
+            self.chunks.append(" ".join(data.split()))
 
 
 def _short_hash(value: str, length: int = 12) -> str:
@@ -237,6 +259,14 @@ class WebInfrastructureExtractor:
             "path_hashes": sorted({_short_hash(p) for p in parser.paths}),
             "tag_count": len(parser.tag_tokens),
         }
+
+    @staticmethod
+    def visible_text(html: str) -> str:
+        """Tekst widoczny na stronie, jeden fragment na linię."""
+        parser = _VisibleTextParser()
+        parser.feed(html)
+        parser.close()
+        return "\n".join(parser.chunks)
 
     @staticmethod
     def structure_similarity(fp_a: DomFingerprint, fp_b: DomFingerprint) -> float:
@@ -447,8 +477,9 @@ class WebInfrastructureExtractor:
                 report.redirect_chain = page["hops"]
                 report.final_url = page["final_url"]
                 report.dom_fingerprint = self.dom_fingerprint(page["html"])
+                report.page_text = self.visible_text(page["html"])
                 report.host = urlparse(page["final_url"]).hostname or report.host
-            except Exception as exc: 
+            except Exception as exc:
                 report.errors.append(f"browser: {type(exc).__name__}: {exc}")
 
         host = report.host

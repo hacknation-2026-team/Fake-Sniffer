@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-from web_infrastructure_extractor import InfrastructureReport, WebInfrastructureExtractor
+from feature_extractor.web_infrastructure_extractor import InfrastructureReport, WebInfrastructureExtractor
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -127,7 +127,7 @@ RDAP_PAYLOAD = {
 
 
 def test_rdap_parses_fields_and_age(extractor):
-    with patch("web_infrastructure_extractor.requests.get", return_value=rdap_response(200, RDAP_PAYLOAD)):
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", return_value=rdap_response(200, RDAP_PAYLOAD)):
         info = extractor.query_rdap("szybki-zarobek.pl", now=NOW)
 
     assert info == {
@@ -149,26 +149,26 @@ def test_rdap_parses_fields_and_age(extractor):
     ],
 )
 def test_rdap_endpoint_selection(extractor, domain, expected_url):
-    with patch("web_infrastructure_extractor.requests.get", return_value=rdap_response(200, RDAP_PAYLOAD)) as get:
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", return_value=rdap_response(200, RDAP_PAYLOAD)) as get:
         extractor.query_rdap(domain)
     assert get.call_args[0][0] == expected_url
     assert get.call_args[1]["timeout"] == 1.0
 
 
 def test_rdap_404_means_unregistered(extractor):
-    with patch("web_infrastructure_extractor.requests.get", return_value=rdap_response(404)):
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", return_value=rdap_response(404)):
         info = extractor.query_rdap("nie-istnieje-xyz.pl")
     assert info["registered"] is False and info["created"] is None and info["nameservers"] == []
 
 
 def test_rdap_server_error_propagates(extractor):
-    with patch("web_infrastructure_extractor.requests.get", return_value=rdap_response(500)):
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", return_value=rdap_response(500)):
         with pytest.raises(requests.HTTPError):
             extractor.query_rdap("example.com")
 
 
 def test_rdap_missing_optional_fields(extractor):
-    with patch("web_infrastructure_extractor.requests.get", return_value=rdap_response(200, {"ldhName": "a.pl"})):
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", return_value=rdap_response(200, {"ldhName": "a.pl"})):
         info = extractor.query_rdap("a.pl", now=NOW)
     assert info["registrar"] is None and info["created"] is None and info["age_days"] is None
 
@@ -206,7 +206,7 @@ def test_resolve_dns_collects_records_and_asn(extractor):
         ("7.113.0.203.origin.asn.cymru.com", "TXT"): ['"64500 | 203.0.113.0/24 | PL | ripencc | 2020-01-01"'],
         ("AS64500.asn.cymru.com", "TXT"): ['"64500 | PL | ripencc | 2010-01-01 | EXAMPLE-AS, PL"'],
     }
-    with patch("web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
+    with patch("feature_extractor.web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
         info = extractor.resolve_dns("login.szybki.pl", "szybki.pl")
 
     assert info["a"] == ["203.0.113.7"]
@@ -223,14 +223,14 @@ def test_resolve_dns_collects_records_and_asn(extractor):
 )
 def test_resolve_dns_survives_all_dns_errors(extractor, error):
     resolver = MagicMock(side_effect=error)
-    with patch("web_infrastructure_extractor.dns.resolver.resolve", resolver):
+    with patch("feature_extractor.web_infrastructure_extractor.dns.resolver.resolve", resolver):
         info = extractor.resolve_dns("example.pl")
     assert info["a"] == info["aaaa"] == info["ns"] == info["mx"] == info["asns"] == []
 
 
 def test_lookup_asn_query_names_for_ipv4_and_ipv6(extractor):
     resolver = make_resolver({})
-    with patch("web_infrastructure_extractor.dns.resolver.resolve", side_effect=resolver):
+    with patch("feature_extractor.web_infrastructure_extractor.dns.resolver.resolve", side_effect=resolver):
         assert extractor.lookup_asn("1.2.3.4") is None
         assert extractor.lookup_asn("2001:db8::1") is None
 
@@ -241,14 +241,14 @@ def test_lookup_asn_query_names_for_ipv4_and_ipv6(extractor):
 
 def test_lookup_asn_without_as_name_still_returns_asn(extractor):
     table = {("1.0.0.10.origin.asn.cymru.com", "TXT"): ['"64501 | 10.0.0.0/8 | ZZ | x | 2000-01-01"']}
-    with patch("web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
+    with patch("feature_extractor.web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
         info = extractor.lookup_asn("10.0.0.1")
     assert info["asn"] == 64501 and info["as_name"] is None
 
 
 def test_lookup_asn_malformed_answer_returns_none(extractor):
     table = {("1.0.0.10.origin.asn.cymru.com", "TXT"): ['"nie-liczba | x"']}
-    with patch("web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
+    with patch("feature_extractor.web_infrastructure_extractor.dns.resolver.resolve", side_effect=make_resolver(table)):
         assert extractor.lookup_asn("10.0.0.1") is None
 
 
@@ -308,8 +308,8 @@ def test_fetch_certificate_der_does_not_verify_chain(extractor):
     context = MagicMock()
     context.wrap_socket.return_value.__enter__.return_value = tls
 
-    with patch("web_infrastructure_extractor.ssl.create_default_context", return_value=context), \
-         patch("web_infrastructure_extractor.socket.create_connection") as conn:
+    with patch("feature_extractor.web_infrastructure_extractor.ssl.create_default_context", return_value=context), \
+         patch("feature_extractor.web_infrastructure_extractor.socket.create_connection") as conn:
         conn.return_value.__enter__.return_value = sock
         assert extractor.fetch_certificate_der("szybki.pl") == b"DER"
 
@@ -359,7 +359,7 @@ def test_fetch_page_records_redirect_chain_only_for_main_frame_navigations(extra
         handler(nav_response(page, "https://ads.example/frame", 200, frame=object()))             # iframe
 
     factory, browser, page = make_playwright_mock(steps)
-    with patch("web_infrastructure_extractor.sync_playwright", factory):
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
         result = extractor.fetch_page("https://ads.tracker/click?id=1")
 
     assert [(h["url"], h["status"], h["location"]) for h in result["hops"]] == [
@@ -379,7 +379,7 @@ def test_fetch_page_closes_browser_on_navigation_error(extractor):
         raise TimeoutError("goto timeout")
 
     factory, browser, _ = make_playwright_mock(steps)
-    with patch("web_infrastructure_extractor.sync_playwright", factory):
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
         with pytest.raises(TimeoutError):
             extractor.fetch_page("https://slow.example")
     browser.close.assert_called_once()
@@ -387,7 +387,7 @@ def test_fetch_page_closes_browser_on_navigation_error(extractor):
 
 def test_fetch_page_rejects_bad_scheme_before_launching_browser(extractor):
     factory = MagicMock()
-    with patch("web_infrastructure_extractor.sync_playwright", factory):
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
         with pytest.raises(ValueError):
             extractor.fetch_page("file:///etc/passwd")
     factory.assert_not_called()
@@ -473,3 +473,31 @@ def test_analyze_ip_host_skips_rdap(extractor):
     assert report.registered_domain is None and report.rdap is None
     mocks["query_rdap"].assert_not_called()
     mocks["resolve_dns"].assert_called_once_with("203.0.113.9", None)
+
+
+def test_visible_text_drops_scripts_styles_and_markup():
+    html = (
+        "<html><head><title>Wiadomości</title><style>.a{color:red}</style></head>"
+        "<body><script>var x = 'ukryte';</script><h1>Tusk   poleca</h1>"
+        "<noscript>włącz JS</noscript><p>Zarób 5000 zł</p><svg><text>ikona</text></svg></body></html>"
+    )
+    text = WebInfrastructureExtractor.visible_text(html)
+
+    assert text.splitlines() == ["Wiadomości", "Tusk poleca", "Zarób 5000 zł"]
+
+
+def test_visible_text_of_empty_html_is_empty():
+    assert WebInfrastructureExtractor.visible_text("") == ""
+
+
+def test_analyze_stores_visible_page_text(extractor):
+    patch_steps(extractor)
+    report = extractor.analyze("https://t.example/c")
+
+    assert "Szok! Tusk poleca" in report.page_text
+    assert "class=" not in report.page_text
+
+
+def test_analyze_without_browser_has_no_page_text(extractor):
+    patch_steps(extractor)
+    assert extractor.analyze("https://szybki.pl", fetch_page=False).page_text is None
