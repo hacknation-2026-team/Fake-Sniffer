@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urljoin
+
+from .profile import registered_domain
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+HTML_EXTENSIONS = {".html", ".htm"}
+MAX_REDIRECTS = 20
+
+
+@dataclass
+class Case:
+    """Jeden incydent z zebranych materiałów: pliki z folderu i jego podfolderów."""
+
+    name: str
+    path: Path
+    html: List[Path] = field(default_factory=list)
+    har: List[Path] = field(default_factory=list)
+    images: List[Path] = field(default_factory=list)
+    videos: List[Path] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.html or self.har or self.images or self.videos)
+
+
+def _natural(path: Path) -> List[Any]:
+    return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", path.name)]
+
+
+def _is_resource_dir(name: str) -> bool:
+    return name.endswith("_files") or name == "resources"
+
+
+def collect_case(path: Path) -> Case:
+    """Pomija katalogi z zasobami zapisanych stron (`*_files`, `resources`)."""
+    case = Case(name=path.name, path=path)
+    for folder, subdirs, files in os.walk(path):
+        subdirs[:] = sorted((d for d in subdirs if not _is_resource_dir(d)), key=str.lower)
+        for name in sorted(files, key=str.lower):
+            file = Path(folder, name)
+            suffix = file.suffix.lower()
+            if suffix in HTML_EXTENSIONS:
+                case.html.append(file)
+            elif suffix == ".har":
+                case.har.append(file)
+            elif suffix in IMAGE_EXTENSIONS:
+                case.images.append(file)
+            elif suffix in VIDEO_EXTENSIONS:
+                case.videos.append(file)
+    return case
+
+
+def find_cases(root: str | Path) -> List[Case]:
+    folders = sorted((p for p in Path(root).iterdir() if p.is_dir()), key=_natural)
+    return [collect_case(folder) for folder in folders]
+
+
+def _is_document(entry: Dict[str, Any]) -> bool:
+    kind = entry.get("_resourceType")
+    if kind:
+        return kind == "document"
+    response = entry.get("response", {})
+    mime = (response.get("content") or {}).get("mimeType") or ""
+    return "html" in mime.lower() or bool(response.get("redirectURL"))
+
+
+def har_infrastructure(path: str | Path) -> Optional[Dict[str, Any]]:
+    """
+    Ślad infrastruktury z zapisu HAR: łańcuch przekierowań głównego dokumentu,
+    domena końcowa i adresy IP serwerów. Zasoby zewnętrzne (trackery, CDN) są pomijane.
+    """
+    entries = json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))["log"]["entries"]
+    start = next((e for e in entries if _is_document(e)), entries[0] if entries else None)
+    if start is None:
+        return None
+
+    by_url = {}
+    for entry in entries:
+        by_url.setdefault(entry["request"]["url"], entry)
+
+    chain: List[Dict[str, Any]] = []
+    ips: List[str] = []
+    current: Optional[Dict[str, Any]] = start
+    final_url = start["request"]["url"]
+    while current is not None and len(chain) < MAX_REDIRECTS:
+        url = current["request"]["url"]
+        status = current.get("response", {}).get("status", 0)
+        target = current.get("response", {}).get("redirectURL") or None
+        chain.append({"url": url, "status": status, "location": target})
+        ip = (current.get("serverIPAddress") or "").strip("[]")
+        if ip:
+            ips.append(ip)
+        final_url = urljoin(url, target) if target else url
+        current = by_url.get(final_url) if target else None
+
+    return {
+        "registered_domain": registered_domain(start["request"]["url"]),
+        "final_url": final_url,
+        "redirect_chain": chain,
+        "dns": {"a": sorted(set(ips)), "aaaa": [], "asns": []},
+    }
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _step(name: str, source: str, data: Any, error: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "source": source,
+        "status": "error" if error else "ok",
+        "duration_sec": 0.0,
+        "data": data,
+        "error": error,
+    }
+
+
+def _safe(steps: List[Dict[str, Any]], name: str, source: str, action: Callable[[], Any]) -> Any:
+    try:
+        data = action()
+    except Exception as exc:
+        steps.append(_step(name, source, None, f"{type(exc).__name__}: {exc}"))
+        return None
+    steps.append(_step(name, source, data))
+    return data
+
+
+def _run(orchestrator: Any, source: str, **inputs: str) -> List[Dict[str, Any]]:
+    steps = orchestrator.run(**inputs).to_dict()["steps"]
+    return [{**step, "source": source} for step in steps]
+
+
+def build_case_report(
+    case: Case,
+    orchestrator: Any,
+    keyframes_root: Optional[Path] = None,
+    images: bool = True,
+    videos: bool = True,
+) -> Dict[str, Any]:
+    """
+    Raport w tym samym kształcie co z main.py, zbudowany z plików incydentu: HAR daje
+    infrastrukturę, zapisany HTML szablon i tekst strony, a obrazy i filmy idą przez ekstraktory.
+    """
+    from feature_extractor.web_infrastructure_extractor import WebInfrastructureExtractor
+
+    steps: List[Dict[str, Any]] = []
+    for har in case.har:
+        _safe(steps, "web_infrastructure", "har", lambda har=har: har_infrastructure(har))
+
+    texts: List[str] = []
+    for index, page in enumerate(case.html):
+        html = _read(page)
+        if index == 0:
+            _safe(
+                steps,
+                "web_infrastructure",
+                "html",
+                lambda: {"dom_fingerprint": WebInfrastructureExtractor.dom_fingerprint(html)},
+            )
+        texts.append(WebInfrastructureExtractor.visible_text(html))
+
+    text = "\n\n".join(t for t in texts if t.strip())
+    if text:
+        steps += _run(orchestrator, "html", text=text)
+
+    if images:
+        for path in case.images:
+            steps += _run(orchestrator, "image", image=str(path))
+
+    if videos:
+        for path in case.videos:
+            if keyframes_root is not None:
+                orchestrator.config.keyframes_dir = str(keyframes_root / case.name / path.stem)
+            steps += _run(orchestrator, "video", video=str(path))
+
+    return {
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "inputs": {
+            "case": case.name,
+            "html": [str(p.relative_to(case.path)) for p in case.html],
+            "har": [str(p.relative_to(case.path)) for p in case.har],
+            "images": [str(p.relative_to(case.path)) for p in case.images],
+            "videos": [str(p.relative_to(case.path)) for p in case.videos],
+        },
+        "steps": steps,
+    }

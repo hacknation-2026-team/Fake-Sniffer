@@ -28,6 +28,17 @@ uv run main.py --models-dir /dane/modele --text "..."
 
 `--download-models` pobiera wszystko naraz, np. przy budowaniu obrazu kontenera. Katalog można zmienić flagą `--models-dir` albo zmienną `FAKE_SNIFFER_MODELS_DIR`. InsightFace (buffalo_l) ma licencję niekomercyjną.
 
+## Budowanie bazy ze zebranych materiałów
+
+Katalog z incydentami, w którym każdy podfolder to jeden incydent (zrzuty ekranu, filmy, zapisane strony HTML i pliki HAR), zamienia na bazę `build_base.py`. Pracuje offline na plikach i niczego nie pobiera ze stron.
+
+```
+uv run build_base.py E:/dane --base base.json --reports-dir reports
+uv run cluster.py --base base.json --out clusters.json
+```
+
+Z HAR bierze łańcuch przekierowań głównego dokumentu, domenę końcową i adresy IP serwerów (trackery i zasoby zewnętrzne pomija). Z zapisanego HTML bierze odcisk szablonu DOM i widoczny tekst, a obrazy i filmy przechodzą przez ekstraktory jak w `main.py`. Foldery `*_files` i `resources` są pomijane. Raport każdego incydentu trafia do `reports/<folder>.json`, więc kolejne uruchomienia nie liczą go od nowa, chyba że dasz `--force`. Przydatne flagi: `--only 1 10`, `--no-images`, `--no-videos`, `--faces-dir`, `--gpu`.
+
 ## Porównanie z bazą znanych incydentów
 
 To osobny proces, który czyta raporty z `main.py`. Baza to jeden plik JSON (`base.json`), a wynik klasteryzacji leży w osobnym pliku (`clusters.json`).
