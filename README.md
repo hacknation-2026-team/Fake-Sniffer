@@ -62,6 +62,19 @@ uv run query.py nowy.json --base base.json --clusters clusters.json
 
 Podobieństwo to średnia ważona po modalnościach dostępnych w obu raportach: infrastruktura 0.35, twarz 0.25, obraz 0.20, tekst 0.20. Brakująca modalność nie obniża wyniku. Wspólna domena (poza skracaczami linków), szablon DOM albo certyfikat TLS to twardy ślad i łączy incydenty niezależnie od wyniku. Para z odległością pHash do 4 i cosinusem tekstu powyżej 0.95 dostaje flagę duplikatu. Progi i podłogi skalowania cosinusów (`correlation/similarity.py`) trzeba skalibrować na prawdziwych danych.
 
+## Deepfake
+
+Ekstraktor `feature_extractor/deepfake_extractor.py` ocenia gotowymi klasyfikatorami z Hugging Face, czy obraz, klatki filmu i głos są syntetyczne: obraz i klatki to ViT `prithivMLmods/Deep-Fake-Detector-v2-Model`, głos to wav2vec2 `Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`. Wynik to prawdopodobieństwo fałszerstwa (dla klatek i okien dźwięku średnia oraz maksimum), czyli wskaźnik, a nie dowód.
+
+```
+uv run main.py --image reklama.png --deepfake
+uv run main.py --video reklama.mp4 --deepfake
+uv run main.py --download-models --deepfake
+```
+
+W `main.py` jest to opcja (`--deepfake`), bo modele ważą razem ponad 1 GB. W GUI analiza deepfake jest włączona, wyłączysz ją flagą `--no-deepfake`. Modele trafiają do wspólnego katalogu `models/huggingface`. Jeśli model głosu ma etykiety typu `LABEL_0`, kod nie wie, która oznacza fałsz, i wtedy podaje same prawdopodobieństwa. Etykietę można wskazać w `OrchestratorConfig(deepfake_audio_fake_label=...)`.
+
+
 ---
 
 Zalecamy odpalanie na izolowanych kontenerach! System odpytuje zewnętrzne serwery - nie przesadzać z automatycznymi wywołaniami
@@ -102,3 +115,20 @@ uv run cluster.py --base base.json --out clusters.json
 # Do którego klastra należy nowy raport
 uv run query.py nowy.json --base base.json --clusters clusters.json
 ```
+
+# Interfejs graficzny
+
+```
+uv run gui.py --base base.json --clusters clusters.json
+```
+
+Otwiera w przeglądarce aplikację pod adresem `http://127.0.0.1:8000` z trzema zakładkami:
+
+- **Analysis**: pole na link, przycisk `+` i strefa przeciągania plików (obraz, film, audio, tekst, HTML, HAR). Po `Submit` pojawia się przydział do kampanii, główne informacje (werdykt, co zadecydowało, dlaczego) i tabela użytych ekstraktorów z ich wynikami. Analizę można dopisać do bazy.
+- **Campaigns**: każda kampania jako graf incydentów. Kliknięcie węzła pokazuje panel `Szczegóły fake` z podglądem, przyciskiem `Więcej` i `Porównaj z innym fake` (potem wskazujesz drugi węzeł).
+- **Database**: lista incydentów z bazy, szczegóły i usuwanie.
+
+Flagi: `--data-dir` (wgrane pliki i podglądy, domyślnie `gui_data`), `--port`, `--faces-dir`, `--models-dir`, `--gpu`, `--no-browser`. Pierwsza analiza pobiera modele, więc trwa dłużej. Interfejs nasłuchuje tylko na `127.0.0.1`, bo analiza linków wykonuje zapytania do zewnętrznych serwerów i nie ma logowania, nie wystawiaj go do sieci.
+
+
+

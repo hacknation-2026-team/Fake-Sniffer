@@ -76,7 +76,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
 
         base.incidents = [i for i in base.incidents if i.source != case.name]
-        incident = base.add(profile, case.name, label=case.name)
+        preview = str(case.images[0].resolve()) if case.images else None
+        incident = base.add(profile, case.name, label=case.name, preview=preview)
         errors = sum(1 for s in report["steps"] if s["status"] == "error")
         print(
             f"{case.name}: {incident.id} ({origin}; html {len(case.html)}, har {len(case.har)}, "

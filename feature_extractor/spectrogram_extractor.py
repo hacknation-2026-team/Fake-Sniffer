@@ -3,8 +3,11 @@ import numpy as np
 import os
 import time
 from dataclasses import dataclass
-from matplotlib.figure import Figure
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypeAlias, TypedDict
+
+os.environ["MPLBACKEND"] = "Agg"
+
+from matplotlib.figure import Figure  # noqa: E402
 
 from .speech_extractor import SAMPLE_RATE, SILENCE_PEAK, load_audio, sha256_file
 

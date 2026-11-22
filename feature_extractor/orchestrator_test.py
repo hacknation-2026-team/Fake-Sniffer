@@ -480,3 +480,95 @@ def test_models_dir_is_passed_to_every_extractor_that_downloads():
 
 def test_models_dir_defaults_to_none():
     assert OrchestratorConfig().models_dir is None
+
+
+def deepfake_mock():
+    detector = MagicMock()
+    detector.analyze_image.return_value = {"file": "a.png", "fake_probability": 0.8}
+    detector.analyze_images.return_value = {"frames": [{}], "max_fake_probability": 0.6}
+    detector.analyze_audio.return_value = {"file": "a.mp3", "max_fake_probability": 0.2}
+    return detector
+
+
+def test_deepfake_is_off_by_default():
+    report = make_orchestrator(**image_mocks()).run(image="a.png")
+    assert not [n for n in names(report) if n.startswith("deepfake")]
+
+
+def test_image_gets_deepfake_step_after_faces():
+    detector = deepfake_mock()
+    config = OrchestratorConfig(deepfake=True)
+    report = make_orchestrator(config, deepfake_detector=detector, **image_mocks()).run(image="a.png")
+    assert names(report)[-1] == "deepfake_image"
+    assert report.step("deepfake_image").data["fake_probability"] == 0.8
+    detector.analyze_image.assert_called_once_with("a.png")
+
+
+def test_video_gets_frame_and_audio_deepfake_steps():
+    detector = deepfake_mock()
+    mocks = video_mocks()
+    mocks["video_extractor"].analyze.return_value["keyframes"] = [
+        {"file_path": "kf/1.jpg"},
+        {"file_path": "kf/2.jpg"},
+    ]
+    config = OrchestratorConfig(deepfake=True, keyframes_dir="kf")
+    report = make_orchestrator(config, deepfake_detector=detector, **mocks).run(video="/x/ad.mp4")
+
+    frames = report.step("deepfake_frames")
+    assert frames.data["file"] == "ad.mp4" and frames.data["max_fake_probability"] == 0.6
+    detector.analyze_images.assert_called_once_with(["kf/1.jpg", "kf/2.jpg"])
+    detector.analyze_audio.assert_called_once_with("/x/ad.mp4")
+    assert names(report).index("deepfake_frames") < names(report).index("audio_features")
+    assert report.step("deepfake_audio").source == "video"
+
+
+def test_audio_input_gets_deepfake_audio_step():
+    detector = deepfake_mock()
+    config = OrchestratorConfig(deepfake=True)
+    report = make_orchestrator(
+        config, deepfake_detector=detector, audio_extractor=audio_mock(), **text_mocks()
+    ).run(audio="a.mp3")
+    assert report.step("deepfake_audio", "audio").data["max_fake_probability"] == 0.2
+
+
+def test_failing_deepfake_step_does_not_stop_the_run():
+    detector = deepfake_mock()
+    detector.analyze_image.side_effect = RuntimeError("brak modelu")
+    config = OrchestratorConfig(deepfake=True)
+    report = make_orchestrator(config, deepfake_detector=detector, **image_mocks()).run(image="a.png")
+    step = report.step("deepfake_image")
+    assert step.status == "error" and "brak modelu" in step.error
+    assert "text_embeddings" in names(report)
+
+
+def test_deepfake_detector_is_built_from_config():
+    config = OrchestratorConfig(
+        deepfake=True,
+        deepfake_image_model="m/obraz",
+        deepfake_audio_model="m/glos",
+        deepfake_audio_fake_label="spoof",
+        models_dir="modele",
+        use_gpu=True,
+    )
+    with patch("feature_extractor.deepfake_extractor.DeepfakeDetector") as detector_class:
+        detector = Orchestrator(config).deepfake_detector
+    detector_class.assert_called_once_with(
+        image_model="m/obraz",
+        audio_model="m/glos",
+        device="cuda",
+        models_dir="modele",
+        audio_fake_label="spoof",
+    )
+    assert detector is detector_class.return_value
+
+
+def test_prefetch_includes_deepfake_models_only_when_enabled():
+    detector = MagicMock()
+    mocks = prefetch_mocks()
+    off = make_orchestrator(OrchestratorConfig(), deepfake_detector=detector, **mocks).prefetch()
+    assert "deepfake_image" not in off
+
+    on = make_orchestrator(OrchestratorConfig(deepfake=True), deepfake_detector=detector, **prefetch_mocks()).prefetch()
+    assert on["deepfake_image"] == "ok" and on["deepfake_audio"] == "ok"
+    detector.load_image_model.assert_called_once_with()
+    detector.load_audio_model.assert_called_once_with()

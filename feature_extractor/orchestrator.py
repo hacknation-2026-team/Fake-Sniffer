@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence,
 
 if TYPE_CHECKING:
     from .audio_feature_extractor import AudioFeatureExtractor
+    from .deepfake_extractor import DeepfakeDetector
     from .face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
     from .keyframe_extractor import LightweightKeyframeExtractor
     from .named_entity_extractor import NamedEntityExtractor
@@ -47,6 +48,10 @@ class OrchestratorConfig:
     spectrograms_dir: Optional[str] = None
     include_vectors: bool = True
     models_dir: Optional[str] = None
+    deepfake: bool = False
+    deepfake_image_model: Optional[str] = None
+    deepfake_audio_model: Optional[str] = None
+    deepfake_audio_fake_label: Optional[str] = None
 
 
 @dataclass
@@ -242,6 +247,18 @@ class Orchestrator:
 
         return AudioFeatureExtractor(self.speech, self.spectrogram, self.sentence_rhythm)
 
+    @cached_property
+    def deepfake_detector(self) -> DeepfakeDetector:
+        from .deepfake_extractor import AUDIO_MODEL, IMAGE_MODEL, DeepfakeDetector
+
+        return DeepfakeDetector(
+            image_model=self.config.deepfake_image_model or IMAGE_MODEL,
+            audio_model=self.config.deepfake_audio_model or AUDIO_MODEL,
+            device=self._device,
+            models_dir=self.config.models_dir,
+            audio_fake_label=self.config.deepfake_audio_fake_label,
+        )
+
     def prefetch(self) -> Dict[str, str]:
         """Pobiera wszystkie modele z góry. Zwraca status każdego: "ok" albo opis błędu."""
         loaders: Dict[str, Callable[[], Any]] = {
@@ -253,6 +270,9 @@ class Orchestrator:
             "speech": lambda: self.speech,
             "browser": lambda: self.web_extractor.ensure_browser(),
         }
+        if self.config.deepfake:
+            loaders["deepfake_image"] = lambda: self.deepfake_detector.load_image_model()
+            loaders["deepfake_audio"] = lambda: self.deepfake_detector.load_audio_model()
         statuses: Dict[str, str] = {}
         for name, load in loaders.items():
             try:
@@ -362,6 +382,10 @@ class Orchestrator:
             report, "visual_embedding", "image", lambda: self.visual_embedder.extract_embedding(path)
         )
         self._step(report, "faces", "image", lambda: self._find_faces(path))
+        if self.config.deepfake:
+            self._step(
+                report, "deepfake_image", "image", lambda: self.deepfake_detector.analyze_image(path)
+            )
 
     def _run_video(self, report: Report, path: str) -> None:
         data = self._step(
@@ -377,12 +401,18 @@ class Orchestrator:
                 "video",
                 lambda: self._identify(data["face_embeddings"]),
             )
+        if self.config.deepfake and data and data.get("keyframes"):
+            self._step(report, "deepfake_frames", "video", lambda: self._deepfake_frames(path, data))
         audio = self._step(
             report,
             "audio_features",
             "video",
             lambda: self.audio_extractor.analyze(path, self.config.spectrograms_dir),
         )
+        if self.config.deepfake:
+            self._step(
+                report, "deepfake_audio", "video", lambda: self.deepfake_detector.analyze_audio(path)
+            )
         text, source_type = _video_text((data or {}).get("ocr_text"), (audio or {}).get("text"))
         self._text_steps(report, "video", text, source_type)
 
@@ -393,7 +423,15 @@ class Orchestrator:
             "audio",
             lambda: self.audio_extractor.analyze(path, self.config.spectrograms_dir),
         )
+        if self.config.deepfake:
+            self._step(
+                report, "deepfake_audio", "audio", lambda: self.deepfake_detector.analyze_audio(path)
+            )
         self._text_steps(report, "audio", (audio or {}).get("text"), "transcript")
+
+    def _deepfake_frames(self, video_path: str, video: Dict[str, Any]) -> Dict[str, Any]:
+        paths = [frame["file_path"] for frame in video["keyframes"]]
+        return {"file": Path(video_path).name, **self.deepfake_detector.analyze_images(paths)}
 
     def _read_image_text(self, path: str) -> Dict[str, Any]:
         lines = self.ocr.extract_with_details(path, min_confidence=self.config.min_ocr_confidence)

@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="pobierz wszystkie modele z góry i zakończ",
     )
+    parser.add_argument(
+        "--deepfake",
+        action="store_true",
+        help="oceń obrazy, klatki i głos klasyfikatorami deepfake (pobiera ponad 1 GB modeli)",
+    )
     parser.add_argument("--faces-dir", help="katalog z osobami referencyjnymi: Imie_Nazwisko/*.jpg")
     parser.add_argument("--keyframes-dir", default="keyframes_out", help="gdzie zapisać klatki z wideo")
     parser.add_argument(
@@ -97,6 +102,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         speech_language=args.speech_language,
         spectrograms_dir=args.spectrograms_dir,
         models_dir=args.models_dir,
+        deepfake=args.deepfake,
     )
     if args.download_models:
         return download_models(Orchestrator(config))

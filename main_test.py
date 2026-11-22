@@ -183,3 +183,9 @@ def test_download_models_respects_models_dir():
     FakeOrchestrator.prefetch = lambda self: {"ocr": "ok"}
     main.main(["--download-models", "--models-dir", "dysk"])
     assert FakeOrchestrator.instances[0].config.models_dir == "dysk"
+
+
+def test_deepfake_flag_is_mapped_to_config(tmp_path):
+    main.main(["--text", "x", "--out", str(tmp_path / "a.json")])
+    main.main(["--text", "x", "--deepfake", "--out", str(tmp_path / "b.json")])
+    assert [o.config.deepfake for o in FakeOrchestrator.instances] == [False, True]

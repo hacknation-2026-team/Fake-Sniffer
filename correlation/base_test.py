@@ -35,3 +35,12 @@ def test_save_and_reload(tmp_path):
     assert loaded.incidents[0].profile == base.incidents[0].profile
     assert loaded.get("inc-1").label == "x"
     assert loaded.get("inc-9") is None
+
+
+def test_preview_is_stored_and_optional(tmp_path):
+    base = Base(tmp_path / "b.json")
+    base.add(Profile(domains=["a.pl"]), "r1", preview="/x/a.png")
+    base.add(Profile(domains=["b.pl"]), "r2")
+    base.save()
+    loaded = Base(tmp_path / "b.json")
+    assert [i.preview for i in loaded.incidents] == ["/x/a.png", None]

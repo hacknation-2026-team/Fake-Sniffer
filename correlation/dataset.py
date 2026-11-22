@@ -136,7 +136,7 @@ def _safe(steps: List[Dict[str, Any]], name: str, source: str, action: Callable[
     return data
 
 
-def _run(orchestrator: Any, source: str, **inputs: str) -> List[Dict[str, Any]]:
+def run_input(orchestrator: Any, source: str, **inputs: str) -> List[Dict[str, Any]]:
     steps = orchestrator.run(**inputs).to_dict()["steps"]
     return [{**step, "source": source} for step in steps]
 
@@ -172,17 +172,17 @@ def build_case_report(
 
     text = "\n\n".join(t for t in texts if t.strip())
     if text:
-        steps += _run(orchestrator, "html", text=text)
+        steps += run_input(orchestrator, "html", text=text)
 
     if images:
         for path in case.images:
-            steps += _run(orchestrator, "image", image=str(path))
+            steps += run_input(orchestrator, "image", image=str(path))
 
     if videos:
         for path in case.videos:
             if keyframes_root is not None:
                 orchestrator.config.keyframes_dir = str(keyframes_root / case.name / path.stem)
-            steps += _run(orchestrator, "video", video=str(path))
+            steps += run_input(orchestrator, "video", video=str(path))
 
     return {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

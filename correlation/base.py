@@ -18,6 +18,7 @@ class Incident:
     source: str
     profile: Profile
     label: Optional[str] = None
+    preview: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -54,6 +55,7 @@ class Base:
         profile: Profile,
         source: str,
         label: Optional[str] = None,
+        preview: Optional[str] = None,
     ) -> Incident:
         incident = Incident(
             id=self.next_id(),
@@ -61,6 +63,7 @@ class Base:
             source=source,
             profile=profile,
             label=label,
+            preview=preview,
         )
         self.incidents.append(incident)
         return incident

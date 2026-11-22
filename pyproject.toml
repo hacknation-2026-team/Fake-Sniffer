@@ -7,6 +7,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "easyocr",
     "sentence-transformers",
+    "transformers",
     "spacy>=3.8,<3.9",
     "pl-core-news-lg",
     "imagehash",
@@ -26,16 +27,20 @@ dependencies = [
     "openai",
     "beautifulsoup4",
     "networkx",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [tool.uv.sources]
 pl-core-news-lg = { url = "https://github.com/explosion/spacy-models/releases/download/pl_core_news_lg-3.8.0/pl_core_news_lg-3.8.0-py3-none-any.whl" }
 
 [tool.uv]
 package = false
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.pytest.ini_options]
 testpaths = ["."]
