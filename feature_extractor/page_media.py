@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from PIL import Image
@@ -23,6 +23,7 @@ SKIPPED_IMAGES = re.compile(r"\.(svg|ico)(\?|$)|sprite|pixel|spacer|1x1|favicon"
 EMBED_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "vimeo.com", "dailymotion.com", "tiktok.com")
 STYLE_URL = re.compile(r"url\(\s*['\"]?([^'\")]+)", re.I)
 MAX_REDIRECTS = 5
+DECLARED_MIN_SIDE = 100
 
 
 def check_public_url(url: str, resolver: Callable[..., Any] = socket.getaddrinfo) -> None:
@@ -116,9 +117,12 @@ class _MediaParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: Sequence[Tuple[str, Optional[str]]]) -> None:
         a = {k: (v or "") for k, v in attrs}
         if tag == "img":
-            for name in ("src", "data-src", "data-lazy-src", "data-original"):
-                self._image(a.get(name), "img", a.get("alt", ""), a)
-            self._image(_largest_from_srcset(a.get("srcset", "") or a.get("data-srcset", "")), "srcset", a.get("alt", ""), a)
+            largest = _largest_from_srcset(a.get("srcset", "") or a.get("data-srcset", ""))
+            if largest:
+                self._image(largest, "srcset", a.get("alt", ""), a)
+            else:
+                for name in ("src", "data-src", "data-lazy-src", "data-original"):
+                    self._image(a.get(name), "img", a.get("alt", ""), a)
         elif tag == "video":
             self._video_depth += 1
             self._video(a.get("src"), a.get("poster"))
@@ -142,6 +146,41 @@ class _MediaParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "video" and self._video_depth:
             self._video_depth -= 1
+
+
+class _CanonicalParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.url: Optional[str] = None
+
+    def handle_starttag(self, tag: str, attrs: Sequence[Tuple[str, Optional[str]]]) -> None:
+        a = {k: (v or "") for k, v in attrs}
+        if self.url is None and tag == "link" and a.get("rel", "").lower() == "canonical":
+            self.url = a.get("href") or None
+        elif self.url is None and tag == "meta" and a.get("property") == "og:url":
+            self.url = a.get("content") or None
+
+
+def find_page_url(html: str) -> Optional[str]:
+    """Adres strony zapisanego HTML-a z `link rel=canonical` albo `og:url`. Pozwala rozwinąć względne linki."""
+    parser = _CanonicalParser()
+    parser.feed(html or "")
+    parser.close()
+    url = (parser.url or "").strip()
+    return url if urlparse(url).scheme in ("http", "https") else None
+
+
+def declared_side(item: Dict[str, Any]) -> Optional[int]:
+    """Krótszy bok z atrybutów width i height albo z parametrów w, h w adresie (sklepy podają je w URL-u)."""
+    width, height = item.get("width"), item.get("height")
+    if not (width and height):
+        query = parse_qs(urlparse(item["url"]).query)
+        try:
+            width = width or int(query.get("w", query.get("width", [""]))[0])
+            height = height or int(query.get("h", query.get("height", [""]))[0])
+        except ValueError:
+            return None
+    return min(width, height) if width and height else None
 
 
 def video_kind(url: str) -> str:
@@ -183,8 +222,12 @@ def extract_media(
         elif kind == "media" or content_type.startswith("video/") or "mpegurl" in content_type:
             videos.append({"url": url, "kind": video_kind(url), "poster": None})
 
+    def worth_fetching(item: Dict[str, Any]) -> bool:
+        side = declared_side(item)
+        return not SKIPPED_IMAGES.search(item["url"]) and (side is None or side >= DECLARED_MIN_SIDE)
+
     return {
-        "images": [i for i in _unique(images) if not SKIPPED_IMAGES.search(i["url"])],
+        "images": [i for i in _unique(images) if worth_fetching(i)],
         "videos": _unique(videos),
         "inline_images": parser.inline_images,
         "emojis": find_emojis(text),
@@ -195,7 +238,7 @@ def extract_media(
 class MediaLimits:
     max_images: int = 8
     max_videos: int = 2
-    candidates: int = 24
+    candidates: int = 40
     image_bytes: int = 15 * 1024 * 1024
     video_bytes: int = 60 * 1024 * 1024
     min_side: int = 120

@@ -311,3 +311,29 @@ def test_hls_unsupported_playlists_are_skipped(tmp_path, playlist, reason):
     assert result[0]["status"] == "skipped"
     assert reason in result[0]["error"]
     assert list(tmp_path.glob("video_*")) == []
+
+
+def test_img_with_srcset_gives_one_candidate():
+    html = '<img src="s.jpg" srcset="s.jpg 1x, l.jpg 2x">'
+    media = extract_media(html, "https://a.example/")
+    assert [i["url"] for i in media["images"]] == ["https://a.example/l.jpg"]
+
+
+def test_declared_small_images_are_dropped():
+    html = (
+        '<img src="/a.png" width="40" height="40">'
+        '<img src="/b.png?w=64&h=64">'
+        '<img src="/c.png?w=750&h=900">'
+        '<img src="/d.png">'
+    )
+    urls = [i["url"] for i in extract_media(html, "https://a.example/")["images"]]
+    assert urls == ["https://a.example/c.png?w=750&h=900", "https://a.example/d.png"]
+
+
+def test_find_page_url_reads_canonical_in_any_attribute_order():
+    from feature_extractor.page_media import find_page_url
+
+    assert find_page_url('<link href="https://a.pl/x" rel="canonical">') == "https://a.pl/x"
+    assert find_page_url('<meta property="og:url" content="https://b.pl/y">') == "https://b.pl/y"
+    assert find_page_url('<link rel="canonical" href="/wzgledny">') is None
+    assert find_page_url("<p>nic</p>") is None

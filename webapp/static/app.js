@@ -4,9 +4,9 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const VERDICTS = {
   KNOWN_CAMPAIGN: ["known", "Znana kampania"],
   WEAK_SIMILARITY: ["weak", "Słabe podobieństwo"],
-  NEW_CAMPAIGN_CANDIDATE: ["new", "Nowa kampania (kandydat)"],
+  NO_MATCH: ["new", "Brak dopasowania do bazy"],
 };
-const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new" };
+const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new", skip: "new" };
 const FEATURE_LABELS = {
   infrastruktura: "Wspólna infrastruktura (domena, IP, trackery)",
   twarz: "Ta sama osoba (twarz)",
@@ -145,6 +145,7 @@ function mainInfo(r) {
       nearest ? h("span", { class: "muted" }, ` do ${nearest.label} (${nearest.id})`) : null),
     v.top_features.length ? [h("h3", {}, "Co zadecydowało"), featureBars(v.top_features)] : null,
     v.reasons.length ? [h("h3", { style: "margin-top:14px" }, "Dlaczego"), h("ul", { class: "reasons" }, v.reasons.map((x) => h("li", {}, x)))] : null,
+    v.verdict === "NO_MATCH" ? h("p", { class: "muted small", style: "margin-top:10px" }, "Porównujemy tylko ze znanymi incydentami. Brak dopasowania nie oznacza ani oszustwa, ani uczciwej strony.") : null,
     v.outdated_clusters ? h("p", { class: "muted small" }, "Baza zmieniła się od ostatniej klasteryzacji, przelicz klastry w zakładce Campaigns.") : null);
 }
 
@@ -160,7 +161,7 @@ function deepfakeCard(r) {
       h("td", { class: "wide", title: row.item }, h("span", {}, row.item), row.origin ? h("span", { class: "muted small" }, " (ze strony)") : null),
       h("td", { title: row.hint || "" }, row.kind),
       h("td", { style: "min-width:180px" }, value == null
-        ? h("span", { class: row.error ? "error" : "muted" }, row.error || "nie rozpoznano etykiety")
+        ? h("span", { class: row.error ? "error" : "muted" }, row.error || row.note || "nie rozpoznano etykiety")
         : [h("div", { class: "bar" }, h("span", { style: `width:${percent(value)}` })),
            h("span", { class: "muted small" }, `max ${percent(value)}`, row.mean != null && row.mean !== value ? `, średnio ${percent(row.mean)}` : "")]),
       h("td", {}, h("span", { class: `badge ${DEEPFAKE_BADGES[row.level]}` }, row.verdict)));
@@ -170,6 +171,20 @@ function deepfakeCard(r) {
     h("table", {}, h("thead", {}, h("tr", {}, ["Element", "Co sprawdzono", "Prawdopodobieństwo fałszerstwa", "Ocena"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)),
     h("p", { class: "muted small", style: "margin-top:12px" },
       "To wskaźnik z gotowych klasyfikatorów, a nie dowód. Modele uczono na konkretnych zbiorach i na nowych generatorach oraz po rekompresji mylą się częściej, a głosy modele znają głównie z angielskiego."));
+}
+
+function riskCard(r) {
+  const risk = r.risk;
+  if (!risk) return null;
+  const signals = risk.signals.map((s) => h("li", {}, h("span", { class: s.kind === "risk" ? "error" : "muted" }, s.kind === "risk" ? "+ " : "− "), s.text));
+  return h("div", { class: "card" },
+    h("h2", {}, "Czy to wygląda na fake?"),
+    h("p", {}, h("span", { class: `badge ${DEEPFAKE_BADGES[risk.level]}` }, risk.label), " ",
+      h("span", { class: "muted" }, `wynik ryzyka ${risk.score.toFixed(2)}`, risk.coverage.length ? `, dane: ${risk.coverage.join(", ")}` : "")),
+    h("div", { class: "bar", style: "max-width:320px;margin:8px 0" }, h("span", { style: `width:${percent(risk.score)}` })),
+    signals.length ? h("ul", { class: "reasons", style: "list-style:none;padding-left:0" }, signals) : h("p", { class: "muted" }, "Nie znaleziono ani sygnałów ryzyka, ani przemawiających za autentycznością."),
+    h("p", { class: "muted small", style: "margin-top:10px" },
+      "Ocena z jawnych reguł (wiek domeny, przekierowania, język nacisku, obrazy AI i deepfake), niezależna od bazy incydentów. To wskaźnik, a nie dowód, a wagi wymagają kalibracji na prawdziwych danych."));
 }
 
 function pageMediaCard(r) {
@@ -283,6 +298,7 @@ function renderResult(root, r) {
   } }, "Rozwiń wszystko");
   fill(root,
     summaryCard(r),
+    riskCard(r),
     h("div", { class: "report-head" }, h("h2", {}, "Szczegółowy raport"), toggle),
     sections,
     addToBase(r));

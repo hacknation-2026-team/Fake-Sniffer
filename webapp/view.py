@@ -237,6 +237,7 @@ LEVELS = {
     "mid": "niejednoznaczne",
     "low": "raczej autentyczne",
     "unknown": "brak oceny",
+    "skip": "pominięto",
 }
 
 
@@ -255,12 +256,14 @@ def deepfake_rows(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for step in steps:
         kind = DEEPFAKE_KINDS.get(step["name"])
         data = step.get("data")
-        if kind is None or (data is None and step.get("status") != "error"):
+        status = step.get("status")
+        if kind is None or (data is None and status not in ("error", "skipped")):
             continue
         data = data or {}
+        skipped = status == "skipped"
         mean = data.get("mean_fake_probability", data.get("fake_probability"))
         peak = data.get("max_fake_probability", data.get("fake_probability"))
-        level = risk_level(peak)
+        level = "skip" if skipped else risk_level(peak)
         rows.append(
             {
                 "item": urls.get(data.get("file")) or data.get("file") or step.get("source"),
@@ -272,7 +275,8 @@ def deepfake_rows(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "level": level,
                 "verdict": LEVELS[level],
                 "model": data.get("model"),
-                "error": step.get("error") if step.get("status") == "error" else None,
+                "error": step.get("error") if status == "error" else None,
+                "note": step.get("error") if skipped else None,
             }
         )
     return rows

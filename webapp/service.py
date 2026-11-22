@@ -16,6 +16,7 @@ from correlation.base import Base, Incident
 from correlation.clustering import Clusters, build_graph, cluster
 from correlation.dataset import build_case_report, collect_case, run_input
 from correlation.matcher import classify
+from correlation.risk import assess
 from correlation.profile import Profile, profile_from_report
 from correlation.similarity import compare
 
@@ -210,6 +211,7 @@ class Workspace:
             "has_features": not analysis.profile.is_empty,
             "added_as": analysis.added_as,
             "verdict": verdict,
+            "risk": assess(analysis.report).to_dict(),
         }
         if verdict and clusters:
             campaigns, families = clusters.campaign_members(), clusters.family_members()

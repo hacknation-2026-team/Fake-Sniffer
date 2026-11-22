@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import List, Optional
 
 from .clustering import Clusters
-from .matcher import KNOWN, NEW, WEAK, Verdict
+from .matcher import KNOWN, NO_MATCH, WEAK, Verdict
 
 HEADLINES = {
     KNOWN: "Podobne do znanej kampanii",
     WEAK: "Słabe podobieństwo do znanych incydentów",
-    NEW: "Nowa kampania (kandydat)",
+    NO_MATCH: "Brak dopasowania do znanych incydentów",
 }
 
 

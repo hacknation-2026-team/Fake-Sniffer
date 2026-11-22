@@ -35,7 +35,7 @@ def test_analyze_with_link_and_file(client):
     assert response.status_code == 200
     assert {s["name"] for s in body["steps"]} == {"web_infrastructure", "visual_hashes", "deepfake_image"}
     assert body["deepfake"][0]["item"] == "zrzut.png"
-    assert body["verdict"]["verdict"] == "NEW_CAMPAIGN_CANDIDATE"
+    assert body["verdict"]["verdict"] == "NO_MATCH"
 
 
 def test_analyze_without_input_is_400(client):

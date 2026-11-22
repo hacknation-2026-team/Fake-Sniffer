@@ -590,7 +590,7 @@ def test_installed_chromium_is_launched_once_without_install(extractor):
     with patch("feature_extractor.web_infrastructure_extractor.install_chromium") as install:
         extractor._launch_browser(playwright)
     install.assert_not_called()
-    playwright.chromium.launch.assert_called_once_with(headless=True)
+    playwright.chromium.launch.assert_called_once_with(headless=True, args=["--disable-dev-shm-usage", "--disable-gpu"])
 
 
 def test_install_chromium_runs_playwright_cli():

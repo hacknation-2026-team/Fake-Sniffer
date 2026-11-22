@@ -219,3 +219,13 @@ def test_report_summary_known_without_campaign():
 
     assert text.startswith("Materiał jest powiązany ze znanymi incydentami, ale za słabo")
     assert text.endswith("Najbliżej: 2 (inc-2), podobieństwo 0.83.")
+
+
+def test_deepfake_rows_show_skipped_detectors_with_reason():
+    from webapp.view import deepfake_rows
+
+    steps = [{"name": "ai_image", "source": "page_image", "status": "skipped",
+              "data": {"file": "logo.png"}, "error": "grafika, nie fotografia (przezroczyste tło)"}]
+    row = deepfake_rows(steps)[0]
+    assert (row["item"], row["level"], row["verdict"]) == ("logo.png", "skip", "pominięto")
+    assert "grafika" in row["note"] and row["error"] is None and row["max"] is None

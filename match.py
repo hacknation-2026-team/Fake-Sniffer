@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from correlation.base import Base
 from correlation.matcher import classify
 from correlation.profile import load_report, profile_from_report
+from correlation.risk import assess, describe_risk
 from correlation.similarity import THRESHOLD, WEAK_THRESHOLD
 from correlation.summary import describe
 
@@ -35,7 +36,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     for path in args.reports:
         try:
-            profile = profile_from_report(load_report(path))
+            report = load_report(path)
+            profile = profile_from_report(report)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"{path}: nie da się wczytać raportu ({exc})", file=sys.stderr)
             failed = True
@@ -46,8 +48,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
 
         verdict = classify(profile, base, threshold=args.threshold, weak=args.weak)
+        risk = assess(report)
         print(describe(path, verdict))
-        entry = {"report": str(path), **verdict.to_dict()}
+        print("\n".join(describe_risk(risk)))
+        entry = {"report": str(path), **verdict.to_dict(), "risk": risk.to_dict()}
 
         if args.add:
             incident = base.add(profile, str(path), args.label)

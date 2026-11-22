@@ -1,6 +1,6 @@
 from correlation.base import Base
 from correlation.clustering import Clusters
-from correlation.matcher import KNOWN, NEW, WEAK, classify
+from correlation.matcher import KNOWN, NO_MATCH, WEAK, classify
 from correlation.profile import Profile
 
 
@@ -20,15 +20,15 @@ def known_clusters():
     )
 
 
-def test_empty_base_means_new_campaign(tmp_path):
+def test_empty_base_means_no_match(tmp_path):
     verdict = classify(Profile(domains=["a.pl"]), Base(tmp_path / "b.json"))
-    assert verdict.verdict == NEW
+    assert verdict.verdict == NO_MATCH
     assert verdict.reasons == ["baza jest pusta"]
 
 
-def test_nothing_to_compare_means_new_campaign(tmp_path):
+def test_nothing_to_compare_means_no_match(tmp_path):
     verdict = classify(Profile(entities=["a:b"]), known_base(tmp_path))
-    assert verdict.verdict == NEW
+    assert verdict.verdict == NO_MATCH
     assert verdict.reasons == ["brak wspólnych cech do porównania"]
 
 
@@ -70,8 +70,10 @@ def test_unrelated_profile_is_new(tmp_path):
     profile = Profile(text_embedding=[0.7, 0.7], domains=["zupelnie.pl"], identities=["Nikt"])
     base = known_base(tmp_path)
     verdict = classify(profile, base, threshold=0.95, weak=0.9)
-    assert verdict.verdict == NEW
+    assert verdict.verdict == NO_MATCH
     assert verdict.to_dict()["neighbours"][0]["id"].startswith("inc-")
+    assert verdict.top_features == [] and verdict.campaign is None and verdict.family is None
+    assert len(verdict.reasons) == 1 and "nic w bazie nie jest podobne" in verdict.reasons[0]
 
 
 def test_without_clusters_no_group_is_given(tmp_path):

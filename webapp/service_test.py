@@ -83,7 +83,7 @@ def test_analyze_needs_input(workspace):
 def test_analyze_url_against_empty_base(workspace):
     result = workspace.analyze("https://scam.top/x", [])
     assert result["name"] == "https://scam.top/x"
-    assert result["verdict"]["verdict"] == "NEW_CAMPAIGN_CANDIDATE"
+    assert result["verdict"]["verdict"] == "NO_MATCH"
     assert result["steps"][0]["summary"] == "https://scam.top/x"
     assert result["has_features"]
 
@@ -249,3 +249,10 @@ def test_analysis_view_has_summary(workspace):
     summary = result["summary"]
     assert summary["headline"]["text"]
     assert any(f["text"] == "Domeny: scam.top" for f in summary["findings"])
+
+
+def test_analysis_view_has_risk_assessment(workspace):
+    result = workspace.analyze("https://scam.top/x", [])
+    risk = result["risk"]
+    assert risk["level"] in {"low", "mid", "high", "unknown"}
+    assert {"score", "label", "signals", "coverage"} <= set(risk)

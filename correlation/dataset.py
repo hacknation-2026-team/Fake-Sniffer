@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
+from feature_extractor.page_media import extract_media, find_page_url
+
 from .profile import registered_domain
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -165,6 +167,14 @@ def run_input(orchestrator: Any, source: str, **inputs: str) -> List[Dict[str, A
     return [step if step["source"].startswith("page_") else {**step, "source": source} for step in steps]
 
 
+def _har_final_url(steps: List[Dict[str, Any]]) -> Optional[str]:
+    for step in steps:
+        url = (step.get("data") or {}).get("final_url")
+        if step["name"] == "web_infrastructure" and url:
+            return url
+    return None
+
+
 def build_case_report(
     case: Case,
     orchestrator: Any,
@@ -185,16 +195,9 @@ def build_case_report(
         _safe(steps, "page_metadata", "har", lambda har=har: har_metadata(har))
 
     metadata = FileMetadataExtractor()
-    texts: List[str] = []
-    for index, page in enumerate(case.html):
-        html = _read(page)
-        if index == 0:
-            _safe(
-                steps,
-                "web_infrastructure",
-                "html",
-                lambda: {"dom_fingerprint": WebInfrastructureExtractor.dom_fingerprint(html)},
-            )
+    htmls = [_read(page) for page in case.html]
+    texts = [WebInfrastructureExtractor.visible_text(html) for html in htmls]
+    for html in htmls:
         meta = _safe(steps, "page_metadata", "html", lambda html=html: metadata.extract_html(html))
         saved_from = (meta or {}).get("saved_from")
         if _is_public_url(saved_from):
@@ -207,11 +210,23 @@ def build_case_report(
                     "final_url": saved_from,
                 },
             )
-        texts.append(WebInfrastructureExtractor.visible_text(html))
-
     text = "\n\n".join(t for t in texts if t.strip())
+    page_url = (_har_final_url(steps) or next((u for u in map(find_page_url, htmls) if u), None)) if htmls else None
+    media = extract_media("\n".join(htmls), page_url or "", text) if htmls else None
+    if htmls:
+        _safe(
+            steps,
+            "web_infrastructure",
+            "html",
+            lambda: {"dom_fingerprint": WebInfrastructureExtractor.dom_fingerprint(htmls[0]), "media": media},
+        )
+
     if text:
         steps += run_input(orchestrator, "html", text=text)
+
+    found_media = media and (media["images"] or media["videos"])
+    if found_media and getattr(getattr(orchestrator, "config", None), "page_media", False):
+        steps += orchestrator.run_page_media(media, page_url or f"case:{case.name}")
 
     if images:
         for path in case.images:

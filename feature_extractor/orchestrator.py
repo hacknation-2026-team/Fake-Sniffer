@@ -423,6 +423,12 @@ class Orchestrator:
             html or "", url=data.get("final_url") or url, extra_urls=[url, *chain]
         )
 
+    def run_page_media(self, media: Dict[str, Any], url: str) -> List[Dict[str, Any]]:
+        """Pobiera i ocenia media znalezione w już zapisanym HTML-u. Zwraca kroki w postaci słowników."""
+        report = Report(datetime.now(timezone.utc).isoformat(timespec="seconds"), {"url": url})
+        self._run_page_media(report, {"media": media, "final_url": url}, url)
+        return report.to_dict()["steps"]
+
     def _run_page_media(self, report: Report, data: Optional[Dict[str, Any]], url: str) -> None:
         """Pobiera obrazy i filmy ze strony i puszcza je przez te same kroki co wgrane pliki."""
         media = (data or {}).get("media")
@@ -455,13 +461,20 @@ class Orchestrator:
         self._step(
             report, "visual_embedding", source, lambda: self.visual_embedder.extract_embedding(path)
         )
-        self._step(report, "faces", source, lambda: self._find_faces(path))
+        faces = self._step(report, "faces", source, lambda: self._find_faces(path))
         if self.config.deepfake:
-            self._step(
-                report, "deepfake_image", source, lambda: self.deepfake_detector.analyze_image(path)
-            )
+            if faces is not None and not faces:
+                self._skip(report, "deepfake_image", source, "brak twarzy na obrazie", path)
+            else:
+                self._step(
+                    report, "deepfake_image", source, lambda: self.deepfake_detector.analyze_image(path)
+                )
         if self.config.ai_image:
-            self._step(report, "ai_image", source, lambda: self.ai_image_detector.analyze_image(path))
+            reason = self._graphic_reason(path)
+            if reason:
+                self._skip(report, "ai_image", source, f"grafika, nie fotografia ({reason})", path)
+            else:
+                self._step(report, "ai_image", source, lambda: self.ai_image_detector.analyze_image(path))
         self._step(report, "file_metadata", source, lambda: self.file_metadata.extract_image(path))
 
     def _run_video(
@@ -481,9 +494,18 @@ class Orchestrator:
                 lambda: self._identify(data["face_embeddings"]),
             )
         if self.config.deepfake and data and data.get("keyframes"):
-            self._step(report, "deepfake_frames", source, lambda: self._frames(self.deepfake_detector, path, data))
+            faces = [f["file_path"] for f in data["keyframes"] if f.get("faces") and f.get("file_path")]
+            frames = faces or ([f["file_path"] for f in data["keyframes"] if f.get("file_path")] if data.get("face_embeddings") else [])
+            if frames:
+                self._step(report, "deepfake_frames", source, lambda: self._frames(self.deepfake_detector, path, frames))
+            else:
+                self._skip(report, "deepfake_frames", source, "brak twarzy w klatkach", path)
         if self.config.ai_image and data and data.get("keyframes"):
-            self._step(report, "ai_frames", source, lambda: self._frames(self.ai_image_detector, path, data))
+            photos = [f["file_path"] for f in data["keyframes"] if f.get("file_path") and not self._graphic_reason(f["file_path"])]
+            if photos:
+                self._step(report, "ai_frames", source, lambda: self._frames(self.ai_image_detector, path, photos))
+            else:
+                self._skip(report, "ai_frames", source, "klatki to grafika, nie fotografie", path)
         audio = self._step(
             report,
             "audio_features",
@@ -513,9 +535,22 @@ class Orchestrator:
         self._step(report, "file_metadata", "audio", lambda: self.file_metadata.extract_media(path))
 
     @staticmethod
-    def _frames(detector: Any, video_path: str, video: Dict[str, Any]) -> Dict[str, Any]:
-        paths = [frame["file_path"] for frame in video["keyframes"]]
-        return {"file": Path(video_path).name, **detector.analyze_images(paths)}
+    def _frames(detector: Any, video_path: str, paths: Sequence[str]) -> Dict[str, Any]:
+        return {"file": Path(video_path).name, **detector.analyze_images(list(paths))}
+
+    @staticmethod
+    def _skip(report: Report, name: str, source: str, reason: str, path: str) -> None:
+        report.steps.append(StepResult(name, source, "skipped", 0.0, {"file": Path(path).name}, reason))
+
+    @staticmethod
+    def _graphic_reason(path: str) -> Optional[str]:
+        """Powód, dla którego obraz to grafika (logo, ilustracja). Gdy nie da się ocenić, traktuje go jak zdjęcie."""
+        from .image_kind import classify_image
+
+        try:
+            return classify_image(path)["reason"]
+        except Exception:
+            return None
 
     def _read_image_text(self, path: str) -> Dict[str, Any]:
         lines = self.ocr.extract_with_details(path, min_confidence=self.config.min_ocr_confidence)

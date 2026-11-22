@@ -25,7 +25,8 @@ def write(path, data):
 def test_new_report_against_empty_base(tmp_path, capsys):
     path = write(tmp_path / "r.json", report())
     assert main([path, "--base", str(tmp_path / "base.json")]) == 0
-    assert "Nowa kampania" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Brak dopasowania" in out and "ryzyko:" in out
     assert not (tmp_path / "base.json").exists()
 
 
@@ -48,7 +49,7 @@ def test_added_reports_are_matched_against_earlier_ones(tmp_path, capsys):
     paths = [write(tmp_path / f"{n}.json", report()) for n in "ab"]
     assert main([*paths, "--base", base, "--add"]) == 0
     out = capsys.readouterr().out
-    assert "Nowa kampania" in out and "Podobne do znanej kampanii" in out
+    assert "Brak dopasowania" in out and "Podobne do znanej kampanii" in out
     incidents = json.loads((tmp_path / "base.json").read_text(encoding="utf-8"))["incidents"]
     assert len(incidents) == 2 and "campaign" not in incidents[0]
 
@@ -61,3 +62,10 @@ def test_unreadable_and_empty_reports_fail(tmp_path, capsys):
     err = capsys.readouterr().err
     assert code == 1
     assert "nie zawiera cech" in err and "nie da się wczytać" in err
+
+
+def test_risk_is_saved_in_output_file(tmp_path):
+    path = write(tmp_path / "r.json", report())
+    out = tmp_path / "wynik.json"
+    main([path, "--base", str(tmp_path / "base.json"), "--out", str(out)])
+    assert json.loads(out.read_text(encoding="utf-8"))[0]["risk"]["level"] in {"low", "mid", "high", "unknown"}
