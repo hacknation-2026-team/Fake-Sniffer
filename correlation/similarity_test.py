@@ -142,3 +142,109 @@ def test_shared_ip_is_only_a_soft_signal():
     assert result.hard == []
     assert result.modalities["infra"] == 0.5
     assert not result.linked()
+
+
+def test_shared_owner_tracker_is_hard_and_google_is_soft():
+    from correlation.profile import Profile
+    from correlation.similarity import compare
+
+    a = Profile(trackers=["facebook_pixel:111", "google_analytics:G-AAA"])
+    b = Profile(trackers=["facebook_pixel:111", "google_analytics:G-AAA"])
+    c = Profile(trackers=["google_analytics:G-AAA"])
+
+    assert compare(a, b).hard == ["wspólny identyfikator Facebook Pixel 111"]
+    soft_only = compare(a, c)
+    assert soft_only.hard == []
+    assert "wspólny identyfikator Google Analytics G-AAA" in soft_only.reasons
+    assert soft_only.modalities["infra"] == 0.8
+
+
+def test_shared_redirect_signature_is_soft():
+    from correlation.profile import Profile
+    from correlation.similarity import compare
+
+    a = Profile(param_signatures=["clickid,land_id,lpkey"])
+    b = Profile(param_signatures=["clickid,land_id,lpkey"])
+
+    result = compare(a, b)
+    assert result.hard == [] and result.modalities["infra"] == 0.6
+
+
+import pytest
+
+
+@pytest.mark.parametrize("key, expected", [
+    ("persName:rafał brzoska", True),
+    ("orgName:inpost", True),
+    ("placeName:polska", False),
+    ("date:2026", False),
+    ("orgName:3s", False),
+    ("placeName:ue", False),
+    ("persName:ab", False),
+])
+def test_informative_entity(key, expected):
+    from correlation.similarity import informative_entity
+
+    assert informative_entity(key) is expected
+
+
+def _entity_profile(contexts, tones=None):
+    from correlation.profile import Profile
+
+    keys = ["persName:rafał brzoska", "placeName:polska", "date:2026"]
+    return Profile(entities=keys, entity_contexts=contexts, entity_tones=tones or {})
+
+
+def test_shared_entity_counts_only_in_similar_context():
+    from correlation.similarity import compare
+
+    same = compare(
+        _entity_profile({"persName:rafał brzoska": [1.0, 0.0]}),
+        _entity_profile({"persName:rafał brzoska": [0.95, 0.1]}),
+    )
+    other = compare(
+        _entity_profile({"persName:rafał brzoska": [1.0, 0.0]}),
+        _entity_profile({"persName:rafał brzoska": [0.2, 1.0]}),
+    )
+
+    assert "wspólne nazwy własne w podobnym kontekście: rafał brzoska" in same.reasons
+    assert not any("polska" in r or "2026" in r for r in same.reasons)
+    assert same.modalities["text"] == 1.0
+    assert other.modalities["text"] == 0.0
+    assert "te same nazwy w innym kontekście (nie liczą się): rafał brzoska" in other.reasons
+
+
+def test_opposite_tone_does_not_count():
+    from correlation.similarity import compare
+
+    context = {"persName:rafał brzoska": [1.0, 0.0]}
+    result = compare(
+        _entity_profile(context, {"persName:rafał brzoska": "negatywny"}),
+        _entity_profile(context, {"persName:rafał brzoska": "pozytywny"}),
+    )
+
+    assert result.modalities["text"] == 0.0
+    assert "te same nazwy o przeciwnym wydźwięku (nie liczą się): rafał brzoska" in result.reasons
+
+
+def test_profiles_without_context_still_match_informative_entities():
+    from correlation.profile import Profile
+    from correlation.similarity import compare
+
+    a = Profile(entities=["persName:rafał brzoska", "placeName:polska"])
+    b = Profile(entities=["persName:rafał brzoska", "placeName:polska"])
+
+    assert compare(a, b).modalities["text"] == 1.0
+
+
+def test_entity_without_context_on_one_side_does_not_count():
+    from correlation.profile import Profile
+    from correlation.similarity import match_entities
+
+    a = Profile(entities=["placeName:kuwait", "orgName:inpost"], entity_contexts={"orgName:inpost": [1.0, 0.0]})
+    b = Profile(entities=["placeName:kuwait", "orgName:inpost"], entity_contexts={"orgName:inpost": [1.0, 0.0]})
+
+    matched = match_entities(a, b)
+
+    assert matched.shared == ["orgName:inpost"]
+    assert matched.in_list == ["placeName:kuwait"]

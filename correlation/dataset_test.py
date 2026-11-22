@@ -114,7 +114,9 @@ def test_case_report_collects_all_sources(tmp_path):
     report = build_case_report(case, orchestrator, keyframes_root=tmp_path / "frames")
 
     names = [(s["name"], s["source"]) for s in report["steps"]]
-    assert names[:2] == [("web_infrastructure", "har"), ("web_infrastructure", "html")]
+    assert names[:4] == [
+        ("web_infrastructure", "har"), ("page_metadata", "har"), ("web_infrastructure", "html"), ("page_metadata", "html"),
+    ]
     assert ("named_entities", "html") in names
     assert names.count(("visual_hashes", "image")) == 2
     assert ("video_features", "video") in names
@@ -159,3 +161,49 @@ def test_run_input_keeps_page_sources():
     orchestrator = SimpleNamespace(run=lambda **kw: SimpleNamespace(to_dict=lambda: {"steps": steps}))
     result = run_input(orchestrator, "text", text="x")
     assert [s["source"] for s in result] == ["page_image", "text"]
+
+
+def saved_page(folder, name, saved_from, body="<p>Treść strony.</p>"):
+    folder.mkdir(parents=True, exist_ok=True)
+    html = f"<!-- saved from url=({len(saved_from):04d}){saved_from} -->\n<html><body>{body}</body></html>"
+    (folder / name).write_text(html, encoding="utf-8")
+
+
+def test_saved_from_url_gives_domain_without_har(tmp_path):
+    saved_page(tmp_path / "1", "strona.html", "https://civicdaybook.live/?utm_id=abc&ad_id=120250477528820329")
+
+    report = build_case_report(collect_case(tmp_path / "1"), FakeOrchestrator())
+
+    profile = profile_from_report(report)
+    assert profile.domains == ["civicdaybook.live"]
+    assert profile.ad_ids == ["120250477528820329"]
+
+
+def test_local_saved_from_is_not_a_domain(tmp_path):
+    saved_page(tmp_path / "1", "strona.html", "http://127.0.0.1:5500/strona.html")
+
+    report = build_case_report(collect_case(tmp_path / "1"), FakeOrchestrator())
+
+    assert profile_from_report(report).domains == []
+
+
+def test_har_trackers_and_ad_ids_link_two_cases(tmp_path):
+    from correlation.similarity import compare
+
+    profiles = []
+    for name, domain in (("a", "pierwsza.top"), ("b", "druga.xyz")):
+        folder = tmp_path / name
+        folder.mkdir()
+        write_har(
+            folder / "zapis.har",
+            [
+                entry(f"https://{domain}/?pxl=1071875908635809&utm_campaign=120250558396270564"),
+                entry("https://www.facebook.com/tr/?id=1376242401352160&ev=PageView", mime="image/gif", kind="image"),
+            ],
+        )
+        profiles.append(profile_from_report(build_case_report(collect_case(folder), FakeOrchestrator())))
+
+    assert profiles[0].trackers == ["facebook_pixel:1071875908635809", "facebook_pixel:1376242401352160"]
+    comparison = compare(*profiles)
+    assert any("Facebook Pixel 1376242401352160" in h for h in comparison.hard)
+    assert any("120250558396270564" in h for h in comparison.hard)

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from correlation.profile import Profile
+from feature_extractor.entity_context_extractor import informative_entity
 from feature_extractor.orchestrator import VECTOR_KEYS
 
 MAX_TEXT = 300
@@ -68,6 +69,37 @@ def _fake(value: Optional[float], kind: str = "") -> str:
     return f"prawdopodobieństwo fałszerstwa {kind + ' ' if kind else ''}{value:.0%}"
 
 
+def _file_metadata(d: Dict[str, Any]) -> str:
+    parts = []
+    if d.get("ai_hints"):
+        parts.append(d["ai_hints"][0])
+    tools = sorted(set(d.get("export_apps") or []) | set(d.get("tools") or []))
+    if tools:
+        parts.append("narzędzia: " + ", ".join(tools[:3]))
+    if d.get("camera"):
+        parts.append(f"aparat: {d['camera']}")
+    if d.get("gps"):
+        parts.append("lokalizacja GPS")
+    if d.get("created"):
+        parts.append(f"utworzono: {d['created']}")
+    return "; ".join(parts) or "brak istotnych metadanych"
+
+
+def _page_metadata(d: Dict[str, Any]) -> str:
+    parts = []
+    if d.get("page_domain"):
+        parts.append(d["page_domain"])
+    if d.get("trackers"):
+        parts.append("trackery: " + ", ".join(f"{t['kind']} {t['id']}" for t in d["trackers"][:3]))
+    if d.get("ad_ids"):
+        parts.append(f"identyfikatory reklam: {len(d['ad_ids'])}")
+    if d.get("claimed_domains"):
+        parts.append("podszywa się pod: " + ", ".join(d["claimed_domains"]))
+    if d.get("generator"):
+        parts.append(f"generator: {d['generator']}")
+    return "; ".join(parts) or "brak trackerów i identyfikatorów"
+
+
 def _page_media(items: List[Dict[str, Any]]) -> str:
     done = [i for i in items if i["status"] == "ok"]
     images = sum(1 for i in done if i["kind"] == "image")
@@ -91,6 +123,10 @@ SUMMARIES: Dict[str, Callable[[Any], str]] = {
     "ai_frames": lambda d: f"{len(d['frames'])} klatek, " + _fake(d.get("max_fake_probability"), "max"),
     "page_media": _page_media,
     "audio_features": lambda d: f"transkrypcja: {len(d.get('text') or '')} znaków",
+    "file_metadata": _file_metadata,
+    "page_metadata": _page_metadata,
+    "paragraphs": lambda d: f"{d['n_paragraphs']} akapitów, układ {d['structure']['pattern'] or '–'}",
+    "sentence_rhythm": lambda d: f"{d['n_sentences']} zdań, rozkazujących {d['sentence_types']['imperative']}",
 }
 
 
@@ -116,7 +152,9 @@ def summarize_step(step: Dict[str, Any]) -> str:
 def step_view(step: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": step["name"],
+        "label": STEP_LABELS.get(step["name"], step["name"]),
         "source": step.get("source"),
+        "source_label": SOURCE_LABELS.get(step.get("source"), step.get("source")),
         "status": step.get("status"),
         "duration_sec": step.get("duration_sec"),
         "error": step.get("error"),
@@ -151,11 +189,47 @@ def profile_view(profile: Profile) -> Dict[str, Any]:
 HIGH_RISK = 0.7
 MEDIUM_RISK = 0.4
 DEEPFAKE_KINDS = {
-    "deepfake_image": "obraz",
-    "deepfake_frames": "klatki wideo",
-    "deepfake_audio": "głos",
-    "ai_image": "obraz (AI)",
-    "ai_frames": "klatki wideo (AI)",
+    "deepfake_image": "Podmieniona twarz (zdjęcie)",
+    "deepfake_frames": "Podmieniona twarz (klatki filmu)",
+    "deepfake_audio": "Sklonowany lub syntetyczny głos",
+    "ai_image": "Wygenerowany przez AI (zdjęcie)",
+    "ai_frames": "Wygenerowany przez AI (klatki filmu)",
+}
+DEEPFAKE_HINTS = {
+    "deepfake_image": "Czy twarz na zdjęciu została podmieniona lub przerobiona (face swap, manipulacja).",
+    "deepfake_frames": "Czy w kluczowych klatkach filmu twarz została podmieniona lub przerobiona.",
+    "deepfake_audio": "Czy głos w nagraniu jest syntetyczny albo sklonowany z prawdziwej osoby.",
+    "ai_image": "Czy cały obraz wygenerował model AI (Stable Diffusion, Midjourney, DALL-E itp.).",
+    "ai_frames": "Czy klatki filmu wygenerował model AI.",
+}
+STEP_LABELS = {
+    "web_infrastructure": "Infrastruktura strony (domena, DNS, certyfikat)",
+    "page_metadata": "Metadane strony (trackery, identyfikatory reklam)",
+    "page_media": "Obrazy i filmy pobrane ze strony",
+    "paragraphs": "Struktura akapitów",
+    "sentence_rhythm": "Rytm i styl zdań",
+    "named_entities": "Nazwy własne (osoby, firmy, miejsca)",
+    "text_embeddings": "Znaczenie tekstu (embedding)",
+    "ocr": "Tekst odczytany z obrazu (OCR)",
+    "visual_hashes": "Odcisk obrazu (hash percepcyjny)",
+    "visual_embedding": "Treść obrazu (CLIP)",
+    "faces": "Twarze",
+    "face_identities": "Rozpoznane osoby",
+    "video_features": "Klatki kluczowe filmu",
+    "audio_features": "Mowa i dźwięk (transkrypcja, spektrogram)",
+    "file_metadata": "Metadane pliku (EXIF, C2PA, tagi)",
+    **DEEPFAKE_KINDS,
+}
+SOURCE_LABELS = {
+    "url": "link",
+    "text": "tekst",
+    "image": "obraz",
+    "video": "film",
+    "audio": "nagranie",
+    "html": "zapisana strona",
+    "har": "zapis HAR",
+    "page_image": "obraz ze strony",
+    "page_video": "film ze strony",
 }
 STATUS_LABELS = {"ok": "przeanalizowano", "skipped": "pominięto", "found": "znaleziono"}
 LEVELS = {
@@ -192,6 +266,7 @@ def deepfake_rows(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "item": urls.get(data.get("file")) or data.get("file") or step.get("source"),
                 "origin": "strona" if str(step.get("source", "")).startswith("page_") else None,
                 "kind": kind,
+                "hint": DEEPFAKE_HINTS.get(step["name"]),
                 "mean": mean,
                 "max": peak,
                 "level": level,
@@ -248,3 +323,84 @@ def page_media_view(steps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "error": download.get("error") if download and download.get("status") == "error" else None,
         "items": items[:40],
     }
+
+
+VERDICT_SENTENCES = {
+    "KNOWN_CAMPAIGN": "Materiał pasuje do znanej kampanii",
+    "WEAK_SIMILARITY": "Materiał jest słabo podobny do znanych incydentów",
+    "NEW_CAMPAIGN_CANDIDATE": "Materiał nie pasuje do żadnej znanej kampanii (kandydat na nową)",
+}
+SEVERITY_ORDER = {"high": 0, "mid": 1, "info": 2}
+
+
+def _finding(severity: str, text: str) -> Dict[str, str]:
+    return {"severity": severity, "text": text}
+
+
+def _headline(verdict: Optional[Dict[str, Any]], campaign_size: Optional[int]) -> Dict[str, Any]:
+    if not verdict:
+        return {"verdict": None, "text": "Z materiału nie udało się wyciągnąć cech do porównania z bazą."}
+    text = VERDICT_SENTENCES.get(verdict["verdict"], verdict["verdict"])
+    if verdict["verdict"] == "KNOWN_CAMPAIGN" and not verdict.get("campaign"):
+        text = "Materiał jest powiązany ze znanymi incydentami, ale za słabo, by przypisać go do konkretnej kampanii"
+    if verdict.get("campaign"):
+        size = f", {campaign_size} incydentów" if campaign_size else ""
+        text += f": {verdict['campaign']}{size}"
+    neighbours = verdict.get("neighbours") or []
+    if neighbours and verdict["verdict"] != "NEW_CAMPAIGN_CANDIDATE":
+        best = neighbours[0]
+        text += f". Najbliżej: {best['label'] or best['id']} ({best['id']}), podobieństwo {best['score']:.2f}"
+    return {"verdict": verdict["verdict"], "text": text + "."}
+
+
+def report_summary(
+    steps: List[Dict[str, Any]],
+    verdict: Optional[Dict[str, Any]],
+    profile: Profile,
+    campaign_size: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Najważniejsze ustalenia z całego raportu, od najpoważniejszych."""
+    findings: List[Dict[str, str]] = []
+
+    neighbours = (verdict or {}).get("neighbours") or []
+    hard = neighbours[0]["hard"] if neighbours else []
+    for trace in hard[:3]:
+        findings.append(_finding("high", f"Twardy ślad łączący z {neighbours[0]['id']}: {trace}"))
+    if (verdict or {}).get("reasons") and not hard:
+        findings.append(_finding("info", "Podobieństwo: " + "; ".join(verdict["reasons"][:2])))
+
+    for row in deepfake_rows(steps):
+        if row["level"] in ("high", "mid") and row["max"] is not None:
+            severity = "high" if row["level"] == "high" else "mid"
+            findings.append(_finding(severity, f"{row['kind']}: {row['max']:.0%} ({row['verdict']}) – {row['item']}"))
+
+    for hint in profile.ai_hints[:3]:
+        findings.append(_finding("high" if "C2PA" in hint else "mid", f"Metadane: {hint}"))
+    if profile.identities:
+        findings.append(_finding("mid", "Rozpoznane osoby: " + ", ".join(profile.identities)))
+
+    pages = [s["data"] for s in steps if s["name"] == "page_metadata" and s.get("status") == "ok" and s.get("data")]
+    claimed = sorted({d for page in pages for d in page.get("claimed_domains") or []})
+    if claimed:
+        findings.append(_finding("high", "Strona podszywa się pod: " + ", ".join(claimed)))
+    if profile.domains:
+        findings.append(_finding("info", "Domeny: " + ", ".join(profile.domains[:4])))
+    if profile.trackers:
+        findings.append(_finding("info", "Trackery: " + ", ".join(t.replace(":", " ") for t in profile.trackers[:4])))
+    if profile.ad_ids:
+        findings.append(_finding("info", f"Identyfikatory reklam lub kampanii: {len(profile.ad_ids)}"))
+    entities = [e for e in profile.entities if informative_entity(e)]
+    if entities:
+        names = ", ".join(e.split(":", 1)[1] for e in entities[:6])
+        findings.append(_finding("info", f"Nazwy własne w tekście: {names}"))
+    if profile.tools:
+        findings.append(_finding("info", "Narzędzia z metadanych: " + ", ".join(profile.tools[:4])))
+
+    counts = {status: sum(1 for s in steps if s.get("status") == status) for status in ("ok", "partial", "skipped", "error")}
+    if counts["error"]:
+        failed = sorted({STEP_LABELS.get(s["name"], s["name"]) for s in steps if s.get("status") == "error"})
+        findings.append(_finding("mid", f"Błąd ekstraktorów ({counts['error']}): " + ", ".join(failed[:4])))
+
+    findings.sort(key=lambda f: SEVERITY_ORDER[f["severity"]])
+    worst = findings[0]["severity"] if findings else "info"
+    return {"headline": _headline(verdict, campaign_size), "level": worst, "findings": findings, "counts": counts}

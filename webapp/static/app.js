@@ -7,7 +7,12 @@ const VERDICTS = {
   NEW_CAMPAIGN_CANDIDATE: ["new", "Nowa kampania (kandydat)"],
 };
 const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new" };
-const FEATURE_LABELS = { infrastruktura: "Infrastruktura", twarz: "Twarz", obraz: "Obraz", tekst: "Tekst" };
+const FEATURE_LABELS = {
+  infrastruktura: "Wspólna infrastruktura (domena, IP, trackery)",
+  twarz: "Ta sama osoba (twarz)",
+  obraz: "Podobny obraz",
+  tekst: "Podobny tekst",
+};
 const PALETTE = ["#c8412b", "#2b5fb0", "#2f7d4f", "#b7791f", "#7a4fa3", "#1f8a8a", "#a33f6b", "#5d6b2f"];
 const state = { files: [], selected: null, compareFrom: null, campaigns: null };
 
@@ -153,7 +158,7 @@ function deepfakeCard(r) {
     const value = row.max;
     return h("tr", {},
       h("td", { class: "wide", title: row.item }, h("span", {}, row.item), row.origin ? h("span", { class: "muted small" }, " (ze strony)") : null),
-      h("td", {}, row.kind),
+      h("td", { title: row.hint || "" }, row.kind),
       h("td", { style: "min-width:180px" }, value == null
         ? h("span", { class: row.error ? "error" : "muted" }, row.error || "nie rozpoznano etykiety")
         : [h("div", { class: "bar" }, h("span", { style: `width:${percent(value)}` })),
@@ -162,7 +167,7 @@ function deepfakeCard(r) {
   });
   return h("div", { class: "card" },
     h("h2", {}, "Deepfake i obrazy AI"),
-    h("table", {}, h("thead", {}, h("tr", {}, ["Element", "Rodzaj", "Prawdopodobieństwo fałszerstwa", "Ocena"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)),
+    h("table", {}, h("thead", {}, h("tr", {}, ["Element", "Co sprawdzono", "Prawdopodobieństwo fałszerstwa", "Ocena"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)),
     h("p", { class: "muted small", style: "margin-top:12px" },
       "To wskaźnik z gotowych klasyfikatorów, a nie dowód. Modele uczono na konkretnych zbiorach i na nowych generatorach oraz po rekompresji mylą się częściej, a głosy modele znają głównie z angielskiego."));
 }
@@ -196,8 +201,9 @@ function extractorTable(steps) {
     const raw = h("pre", { hidden: true }, JSON.stringify(step.data, null, 2));
     return [
       h("tr", { class: "click", onclick: () => { raw.hidden = !raw.hidden; } },
-        h("td", {}, h("span", { class: `status ${step.status}` }), step.name),
-        h("td", {}, step.source),
+        h("td", {}, h("span", { class: `status ${step.status}` }), step.label || step.name,
+          step.label && step.label !== step.name ? h("div", { class: "muted small" }, step.name) : null),
+        h("td", {}, step.source_label || step.source),
         h("td", {}, step.duration_sec != null ? `${step.duration_sec.toFixed(1)} s` : ""),
         h("td", { class: "wide" + (step.status === "error" ? " error" : ""), title: step.summary }, h("span", {}, step.summary))),
       h("tr", { hidden: false }, h("td", { colspan: 4, style: "padding:0;border:0" }, raw)),
@@ -223,19 +229,62 @@ function addToBase(r) {
   return h("div", { class: "card" }, h("div", { class: "row" }, label, button), note);
 }
 
-function renderResult(root, r) {
+const SEVERITY_LABELS = { high: "ważne", mid: "do sprawdzenia", info: "informacja" };
+
+function summaryCard(r) {
   const v = r.verdict;
+  const s = r.summary || { headline: { text: "" }, findings: [], counts: {} };
   const campaign = v && v.campaign
     ? h("span", {}, h("strong", {}, v.campaign), ` (${r.campaign_size} incydentów)`, v.family ? h("span", { class: "muted" }, `, rodzina ${v.family}`) : null)
     : h("span", { class: "muted" }, v ? "brak, nowa kampania" : "nie dotyczy");
+  const c = s.counts || {};
+  return h("div", { class: `card summary level-${s.level || "info"}` },
+    h("h2", {}, "Podsumowanie"),
+    h("p", { class: "headline" }, v ? [badge(v.verdict), " "] : null, s.headline.text),
+    h("table", { class: "plain" }, h("tbody", {},
+      h("tr", {}, h("th", {}, "Materiał"), h("td", { class: "wide", title: r.name }, h("span", {}, r.name))),
+      h("tr", {}, h("th", {}, "Przydział do kampanii"), h("td", {}, campaign)))),
+    s.findings.length
+      ? h("ul", { class: "findings" }, s.findings.map((f) =>
+          h("li", { class: `finding ${f.severity}` }, h("span", { class: "tag" }, SEVERITY_LABELS[f.severity]), f.text)))
+      : h("p", { class: "muted" }, "Brak istotnych ustaleń."),
+    h("p", { class: "muted small" },
+      `Kroki: ${c.ok || 0} przeanalizowanych`, c.partial ? `, ${c.partial} częściowo` : "",
+      `, ${c.skipped || 0} pominiętych, ${c.error || 0} z błędem. Szczegóły w raporcie poniżej.`));
+}
+
+function collapsible(card, title, subtitle) {
+  if (!card) return null;
+  const heading = card.querySelector("h2");
+  if (heading) heading.remove();
+  return h("details", { class: "card section" },
+    h("summary", {}, h("span", { class: "section-title" }, title || (heading ? heading.textContent : "")),
+      subtitle ? h("span", { class: "muted small" }, subtitle) : null),
+    h("div", { class: "section-body" }, Array.from(card.childNodes)));
+}
+
+function renderResult(root, r) {
+  const v = r.verdict;
+  const failed = r.steps.filter((s) => s.status === "error").length;
+  const peak = Math.max(-1, ...r.deepfake.map((row) => (row.max == null ? -1 : row.max)));
+  const sections = [
+    collapsible(mainInfo(r), "Dopasowanie do bazy",
+      v ? `${(VERDICTS[v.verdict] || [null, v.verdict])[1]}, podobieństwo ${v.best_score.toFixed(2)}` : "brak cech do porównania"),
+    collapsible(deepfakeCard(r), null, peak >= 0 ? `najwyższy wynik ${percent(peak)}` : null),
+    collapsible(pageMediaCard(r), null, r.page_media ? `${r.page_media.images} obrazów, ${r.page_media.videos} filmów` : null),
+    collapsible(h("div", { class: "card" }, h("h2", {}, "Użyte ekstraktory"),
+      h("p", { class: "muted small" }, "Kliknij wiersz, żeby zobaczyć dane kroku."), extractorTable(r.steps)),
+      null, `${r.steps.length} kroków` + (failed ? `, ${failed} z błędem` : "")),
+  ].filter(Boolean);
+  const toggle = h("button", { type: "button", onclick: () => {
+    const open = !sections.every((s) => s.open);
+    sections.forEach((s) => { s.open = open; });
+    toggle.textContent = open ? "Zwiń wszystko" : "Rozwiń wszystko";
+  } }, "Rozwiń wszystko");
   fill(root,
-    h("div", { class: "card" },
-      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Plik / nazwa pliku / URL"), h("th", {}, "Przydział do kampanii"))),
-        h("tbody", {}, h("tr", {}, h("td", {}, r.name), h("td", {}, campaign))))),
-    deepfakeCard(r),
-    pageMediaCard(r),
-    mainInfo(r),
-    h("div", { class: "card" }, h("h2", {}, "Użyte ekstraktory"), h("p", { class: "muted small" }, "Kliknij wiersz, żeby zobaczyć dane kroku."), extractorTable(r.steps)),
+    summaryCard(r),
+    h("div", { class: "report-head" }, h("h2", {}, "Szczegółowy raport"), toggle),
+    sections,
     addToBase(r));
 }
 

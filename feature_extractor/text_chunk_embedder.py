@@ -149,3 +149,16 @@ class DocumentEmbedder:
             )
 
         return results
+
+    def embed_texts(
+        self, texts: List[str], input_type: InputType = "passage", batch_size: int = 32
+    ) -> List[EmbeddingVector]:
+        if not texts:
+            return []
+        vectors: np.ndarray = self.model.encode(
+            [self._format_text(t, input_type) for t in texts],
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
+        return [[float(x) for x in vec] for vec in vectors]

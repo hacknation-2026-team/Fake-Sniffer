@@ -40,6 +40,7 @@ def _unique(values: Iterable[Optional[str]]) -> List[str]:
     return sorted({v for v in values if v})
 
 
+
 @dataclass
 class Profile:
     """Cechy jednego incydentu wyciągnięte z raportu, gotowe do porównań."""
@@ -59,6 +60,14 @@ class Profile:
     dom_hash: Optional[str] = None
     dom_paths: List[str] = field(default_factory=list)
     cert_sha256: Optional[str] = None
+    trackers: List[str] = field(default_factory=list)
+    ad_ids: List[str] = field(default_factory=list)
+    param_signatures: List[str] = field(default_factory=list)
+    tools: List[str] = field(default_factory=list)
+    ai_hints: List[str] = field(default_factory=list)
+    entity_contexts: Dict[str, List[float]] = field(default_factory=dict)
+    entity_tones: Dict[str, str] = field(default_factory=dict)
+    entity_lists: List[str] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
@@ -100,6 +109,30 @@ def _add_infrastructure(profile: Profile, data: Dict[str, Any]) -> None:
     profile.cert_sha256 = profile.cert_sha256 or (data.get("tls") or {}).get("sha256")
 
 
+def _add_page_metadata(profile: Profile, data: Dict[str, Any]) -> None:
+    trackers = [f"{t['kind']}:{t['id']}" for t in data.get("trackers") or [] if t.get("kind") and t.get("id")]
+    profile.trackers = _unique(profile.trackers + trackers)
+    profile.ad_ids = _unique(profile.ad_ids + list(data.get("ad_ids") or []))
+    profile.param_signatures = _unique(profile.param_signatures + [data.get("param_signature")])
+    profile.tools = _unique(profile.tools + [data.get("generator")])
+
+
+def _add_file_metadata(profile: Profile, data: Dict[str, Any]) -> None:
+    profile.tools = _unique(profile.tools + list(data.get("tools") or []) + list(data.get("export_apps") or []))
+    profile.ai_hints = _unique(profile.ai_hints + list(data.get("ai_hints") or []))
+
+
+def _add_entity_contexts(profile: Profile, data: Dict[str, Any]) -> None:
+    for key, context in data.items():
+        if context.get("in_list"):
+            profile.entity_lists = _unique(profile.entity_lists + [key])
+            continue
+        if context.get("embedding") and key not in profile.entity_contexts:
+            profile.entity_contexts[key] = _vector(context["embedding"])
+        if context.get("tone") and key not in profile.entity_tones:
+            profile.entity_tones[key] = context["tone"]
+
+
 def _add_faces(profile: Profile, faces: List[Dict[str, Any]]) -> None:
     for face in faces:
         if face.get("embedding"):
@@ -120,8 +153,14 @@ def profile_from_report(report: Dict[str, Any]) -> Profile:
         name, data = step["name"], step["data"]
         if name == "web_infrastructure":
             _add_infrastructure(profile, data)
+        elif name == "page_metadata":
+            _add_page_metadata(profile, data)
+        elif name == "file_metadata":
+            _add_file_metadata(profile, data)
         elif name == "named_entities":
             entities += [f"{e['label']}:{(e.get('lemma') or e['text']).casefold()}" for e in data]
+        elif name == "entity_contexts":
+            _add_entity_contexts(profile, data)
         elif name == "text_embeddings":
             for chunk in data:
                 if chunk.get("embedding"):

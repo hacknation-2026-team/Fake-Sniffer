@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from feature_extractor.entity_context_extractor import informative_entity
+
 from .profile import Profile
 
 WEIGHTS: Dict[str, float] = {"infra": 0.35, "face": 0.25, "visual": 0.20, "text": 0.20}
@@ -23,6 +25,14 @@ DUPLICATE_TEXT_COSINE = 0.95
 
 SHORTENERS = frozenset({"bit.ly", "t.co", "tinyurl.com", "goo.gl", "is.gd", "cutt.ly", "ow.ly", "rebrand.ly"})
 FEATURE_NAMES = {"infra": "infrastruktura", "face": "twarz", "visual": "obraz", "text": "tekst"}
+OWNER_TRACKERS = frozenset({"facebook_pixel", "tiktok_pixel", "yandex_metrica", "hotjar", "microsoft_clarity"})
+ENTITY_CONTEXT_THRESHOLD = 0.95
+OPPOSITE_TONES = frozenset({("pozytywny", "negatywny"), ("negatywny", "pozytywny")})
+TRACKER_NAMES = {
+    "facebook_pixel": "Facebook Pixel", "tiktok_pixel": "TikTok Pixel", "yandex_metrica": "Yandex Metrica",
+    "hotjar": "Hotjar", "microsoft_clarity": "Microsoft Clarity", "google_analytics": "Google Analytics",
+    "google_ads": "Google Ads", "google_tag_manager": "Google Tag Manager",
+}
 
 
 @dataclass
@@ -82,7 +92,7 @@ def text_cosine(a: Profile, b: Profile) -> Optional[float]:
 
 def _infra(a: Profile, b: Profile) -> Optional[Tuple[float, List[str], List[str]]]:
     def present(p: Profile) -> bool:
-        return bool(p.domains or p.ips or p.dom_hash or p.cert_sha256)
+        return bool(p.domains or p.ips or p.dom_hash or p.cert_sha256 or p.trackers or p.ad_ids or p.param_signatures)
 
     if not (present(a) and present(b)):
         return None
@@ -96,6 +106,17 @@ def _infra(a: Profile, b: Profile) -> Optional[Tuple[float, List[str], List[str]
         hard.append("ten sam certyfikat TLS")
 
     soft: List[Tuple[float, str]] = []
+    for tracker in sorted(set(a.trackers) & set(b.trackers)):
+        kind, _, value = tracker.partition(":")
+        text = f"wspólny identyfikator {TRACKER_NAMES.get(kind, kind)} {value}"
+        if kind in OWNER_TRACKERS:
+            hard.append(text)
+        else:
+            soft.append((0.8, text))
+    for ad_id in sorted(set(a.ad_ids) & set(b.ad_ids)):
+        hard.append(f"ten sam identyfikator reklamy lub kampanii {ad_id}")
+    if set(a.param_signatures) & set(b.param_signatures):
+        soft.append((0.6, "ten sam system przekierowań (identyczne parametry adresu)"))
     if a.dom_paths and b.dom_paths:
         overlap = jaccard(a.dom_paths, b.dom_paths)
         if overlap >= 0.3:
@@ -149,6 +170,44 @@ def _visual(a: Profile, b: Profile) -> Optional[Tuple[float, List[str]]]:
     return (float(np.mean(parts)), reasons) if parts else None
 
 
+@dataclass
+class EntityMatch:
+    shared: List[str] = field(default_factory=list)
+    other_context: List[str] = field(default_factory=list)
+    other_tone: List[str] = field(default_factory=list)
+    in_list: List[str] = field(default_factory=list)
+
+
+def match_entities(a: Profile, b: Profile) -> EntityMatch:
+    """
+    Wspólne nazwy własne, które coś znaczą: pomija ogólne, a gdy oba profile mają kontekst,
+    wymaga podobnego otoczenia w tekście i niesprzecznego wydźwięku.
+    """
+    result = EntityMatch()
+    for key in sorted(set(a.entities) & set(b.entities)):
+        if not informative_entity(key):
+            continue
+        if key in a.entity_lists or key in b.entity_lists:
+            result.in_list.append(key)
+            continue
+        ctx_a, ctx_b = a.entity_contexts.get(key), b.entity_contexts.get(key)
+        if a.entity_contexts and b.entity_contexts and not (ctx_a and ctx_b):
+            result.in_list.append(key)
+            continue
+        if ctx_a and ctx_b and cosine(ctx_a, ctx_b) < ENTITY_CONTEXT_THRESHOLD:
+            result.other_context.append(key)
+            continue
+        if (a.entity_tones.get(key), b.entity_tones.get(key)) in OPPOSITE_TONES:
+            result.other_tone.append(key)
+            continue
+        result.shared.append(key)
+    return result
+
+
+def _entity_names(keys: List[str], limit: int = 5) -> str:
+    return ", ".join(key.split(":", 1)[1] for key in keys[:limit])
+
+
 def _text(a: Profile, b: Profile) -> Optional[Tuple[float, List[str]]]:
     parts: List[Tuple[float, float]] = []
     reasons: List[str] = []
@@ -159,13 +218,20 @@ def _text(a: Profile, b: Profile) -> Optional[Tuple[float, List[str]]]:
         if similarity >= 0.8:
             reasons.append(f"podobny tekst (embedding {similarity:.2f})")
 
-    if a.entities and b.entities:
-        overlap = jaccard(a.entities, b.entities)
-        parts.append((0.3, overlap))
-        shared = sorted(set(a.entities) & set(b.entities))
-        if shared:
-            names = ", ".join(key.split(":", 1)[1] for key in shared[:5])
-            reasons.append(f"wspólne nazwy własne: {names}")
+    informative_a = [e for e in a.entities if informative_entity(e) and e not in a.entity_lists]
+    informative_b = [e for e in b.entities if informative_entity(e) and e not in b.entity_lists]
+    if informative_a and informative_b:
+        matched = match_entities(a, b)
+        union = set(informative_a) | set(informative_b)
+        parts.append((0.3, len(matched.shared) / len(union)))
+        if matched.shared:
+            reasons.append(f"wspólne nazwy własne w podobnym kontekście: {_entity_names(matched.shared)}")
+        if matched.other_context:
+            reasons.append(f"te same nazwy w innym kontekście (nie liczą się): {_entity_names(matched.other_context)}")
+        if matched.other_tone:
+            reasons.append(f"te same nazwy o przeciwnym wydźwięku (nie liczą się): {_entity_names(matched.other_tone)}")
+        if matched.in_list:
+            reasons.append(f"pominięto {len(matched.in_list)} wspólnych nazw bez kontekstu (wyliczenia, listy, menu)")
 
     if not parts:
         return None

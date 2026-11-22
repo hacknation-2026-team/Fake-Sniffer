@@ -1,3 +1,4 @@
+from pathlib import Path
 import io
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ class FakeOrchestrator:
                 {"name": "visual_hashes", "source": "image", "status": "ok",
                  "data": {"phash": "ab" * 8, "dhash": "cd" * 8, "ahash": "ef" * 8}},
                 {"name": "deepfake_image", "source": "image", "status": "ok",
-                 "data": {"file": value.split("/")[-1], "fake_probability": 0.9, "model": "m"}},
+                 "data": {"file": Path(value).name, "fake_probability": 0.9, "model": "m"}},
             ]
             return SimpleNamespace(to_dict=lambda: {"steps": image_steps})
         steps = {
@@ -194,7 +195,7 @@ def test_analysis_view_has_deepfake_table(workspace):
     result = workspace.analyze("", [("zrzut.png", png_bytes())])
     assert result["deepfake_enabled"] is True
     row = result["deepfake"][0]
-    assert (row["item"], row["kind"], row["level"], row["verdict"]) == ("zrzut.png", "obraz", "high", "podejrzane")
+    assert (row["item"], row["kind"], row["level"], row["verdict"]) == ("zrzut.png", "Podmieniona twarz (zdjęcie)", "high", "podejrzane")
 
 
 def test_deepfake_can_be_disabled_in_settings(settings, fake):
@@ -224,7 +225,7 @@ def test_page_media_steps_keep_their_page_sources(settings):
     result = Workspace(settings, lambda: PageOrchestrator()).analyze("https://scam.top/", [])
     assert [s["source"] for s in result["steps"]] == ["url", "url", "page_image"]
     row = result["deepfake"][0]
-    assert (row["item"], row["kind"], row["origin"]) == ("https://cdn/a.jpg", "obraz (AI)", "strona")
+    assert (row["item"], row["kind"], row["origin"]) == ("https://cdn/a.jpg", "Wygenerowany przez AI (zdjęcie)", "strona")
     media = result["page_media"]
     assert media["images"] == 1 and media["downloaded"] and media["emojis"]["total"] == 2
     assert media["items"][0]["status_label"] == "przeanalizowano"
@@ -241,3 +242,10 @@ def test_default_orchestrator_gets_page_media_and_ai_settings(settings):
     config = orchestrator.call_args[0][0]
     assert config.ai_image and config.page_media
     assert config.page_media_dir == str(settings.data_dir / "page_media")
+
+
+def test_analysis_view_has_summary(workspace):
+    result = workspace.analyze("https://scam.top/x", [])
+    summary = result["summary"]
+    assert summary["headline"]["text"]
+    assert any(f["text"] == "Domeny: scam.top" for f in summary["findings"])

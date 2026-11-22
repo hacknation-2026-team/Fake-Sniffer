@@ -19,7 +19,7 @@ from correlation.matcher import classify
 from correlation.profile import Profile, profile_from_report
 from correlation.similarity import compare
 
-from .view import deepfake_rows, page_media_view, profile_view, step_view
+from .view import deepfake_rows, page_media_view, profile_view, report_summary, step_view
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
 TEXT_EXTENSIONS = {".txt", ".md"}
@@ -215,6 +215,9 @@ class Workspace:
             campaigns, families = clusters.campaign_members(), clusters.family_members()
             view["campaign_size"] = len(campaigns.get(verdict["campaign"], []))
             view["family_size"] = len(families.get(verdict["family"], []))
+        view["summary"] = report_summary(
+            analysis.report["steps"], verdict, analysis.profile, view.get("campaign_size")
+        )
         return view
 
     def add_to_base(self, analysis_id: str, label: str = "") -> Dict[str, Any]:

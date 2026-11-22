@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -7,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from .profile import registered_domain
 
@@ -111,6 +112,29 @@ def har_infrastructure(path: str | Path) -> Optional[Dict[str, Any]]:
     }
 
 
+def _is_public_url(url: Optional[str]) -> bool:
+    host = urlparse(url or "").hostname
+    if not host or host == "localhost" or host.endswith(".local"):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return address.is_global
+
+
+def har_metadata(path: str | Path) -> Dict[str, Any]:
+    """Trackery ze wszystkich zapytań HAR i sygnały z adresów głównego dokumentu."""
+    from feature_extractor.file_metadata_extractor import find_trackers, url_signals
+
+    entries = json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))["log"]["entries"]
+    urls = [e["request"]["url"] for e in entries]
+    documents = [e["request"]["url"] for e in entries if _is_document(e)]
+    signals = url_signals(documents)
+    trackers = {(t["kind"], t["id"]): t for t in find_trackers("\n".join(urls)) + signals["trackers"]}
+    return {**signals, "trackers": sorted(trackers.values(), key=lambda t: (t["kind"], t["id"]))}
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
@@ -152,12 +176,15 @@ def build_case_report(
     Raport w tym samym kształcie co z main.py, zbudowany z plików incydentu: HAR daje
     infrastrukturę, zapisany HTML szablon i tekst strony, a obrazy i filmy idą przez ekstraktory.
     """
+    from feature_extractor.file_metadata_extractor import FileMetadataExtractor
     from feature_extractor.web_infrastructure_extractor import WebInfrastructureExtractor
 
     steps: List[Dict[str, Any]] = []
     for har in case.har:
         _safe(steps, "web_infrastructure", "har", lambda har=har: har_infrastructure(har))
+        _safe(steps, "page_metadata", "har", lambda har=har: har_metadata(har))
 
+    metadata = FileMetadataExtractor()
     texts: List[str] = []
     for index, page in enumerate(case.html):
         html = _read(page)
@@ -167,6 +194,18 @@ def build_case_report(
                 "web_infrastructure",
                 "html",
                 lambda: {"dom_fingerprint": WebInfrastructureExtractor.dom_fingerprint(html)},
+            )
+        meta = _safe(steps, "page_metadata", "html", lambda html=html: metadata.extract_html(html))
+        saved_from = (meta or {}).get("saved_from")
+        if _is_public_url(saved_from):
+            _safe(
+                steps,
+                "web_infrastructure",
+                "html",
+                lambda saved_from=saved_from: {
+                    "registered_domain": registered_domain(saved_from),
+                    "final_url": saved_from,
+                },
             )
         texts.append(WebInfrastructureExtractor.visible_text(html))
 

@@ -13,7 +13,9 @@ if TYPE_CHECKING:
     from .audio_feature_extractor import AudioFeatureExtractor
     from .ai_image_extractor import AiImageDetector
     from .deepfake_extractor import DeepfakeDetector
+    from .entity_context_extractor import EntityContextExtractor
     from .face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
+    from .file_metadata_extractor import FileMetadataExtractor
     from .keyframe_extractor import LightweightKeyframeExtractor
     from .named_entity_extractor import NamedEntityExtractor
     from .ocr_text_extractor import TextExtractor
@@ -221,6 +223,18 @@ class Orchestrator:
         return WebInfrastructureExtractor(models_dir=self.config.models_dir)
 
     @cached_property
+    def entity_contexts(self) -> EntityContextExtractor:
+        from .entity_context_extractor import EntityContextExtractor
+
+        return EntityContextExtractor(self.text_embedder)
+
+    @cached_property
+    def file_metadata(self) -> FileMetadataExtractor:
+        from .file_metadata_extractor import FileMetadataExtractor
+
+        return FileMetadataExtractor()
+
+    @cached_property
     def speech(self) -> SpeechExtractor:
         from .speech_extractor import SpeechExtractor
 
@@ -361,7 +375,7 @@ class Orchestrator:
                 report.steps.append(StepResult(name, source, "skipped", 0.0, None, "brak tekstu"))
             return
 
-        self._step(
+        entities = self._step(
             report, "named_entities", source, lambda: self.entity_extractor.extract_entities(text)
         )
         self._step(
@@ -373,6 +387,10 @@ class Orchestrator:
                 for chunk in self.text_embedder.extract_embeddings(text, source_type=source_type)
             ],
         )
+        if entities:
+            self._step(
+                report, "entity_contexts", source, lambda: self.entity_contexts.extract(text, entities)
+            )
 
     def _run_text(self, report: Report, text: str) -> None:
         self._text_steps(report, "text", text, "unknown")
@@ -395,7 +413,15 @@ class Orchestrator:
             )
         else:
             report.steps.append(StepResult("paragraphs", "url", "skipped", 0.0, None, "brak HTML strony"))
+        self._step(report, "page_metadata", "url", lambda: self._page_metadata(url, data, page.get("html")))
         self._run_page_media(report, data, url)
+
+    def _page_metadata(self, url: str, data: Optional[Dict[str, Any]], html: Optional[str]) -> Dict[str, Any]:
+        data = data or {}
+        chain = [hop.get("url") for hop in data.get("redirect_chain") or []]
+        return self.file_metadata.extract_html(
+            html or "", url=data.get("final_url") or url, extra_urls=[url, *chain]
+        )
 
     def _run_page_media(self, report: Report, data: Optional[Dict[str, Any]], url: str) -> None:
         """Pobiera obrazy i filmy ze strony i puszcza je przez te same kroki co wgrane pliki."""
@@ -436,6 +462,7 @@ class Orchestrator:
             )
         if self.config.ai_image:
             self._step(report, "ai_image", source, lambda: self.ai_image_detector.analyze_image(path))
+        self._step(report, "file_metadata", source, lambda: self.file_metadata.extract_image(path))
 
     def _run_video(
         self, report: Report, path: str, source: str = "video", keyframes_dir: Optional[str] = None
@@ -469,6 +496,7 @@ class Orchestrator:
             )
         text, source_type = _video_text((data or {}).get("ocr_text"), (audio or {}).get("text"))
         self._text_steps(report, source, text, source_type)
+        self._step(report, "file_metadata", source, lambda: self.file_metadata.extract_media(path))
 
     def _run_audio(self, report: Report, path: str) -> None:
         audio = self._step(
@@ -482,6 +510,7 @@ class Orchestrator:
                 report, "deepfake_audio", "audio", lambda: self.deepfake_detector.analyze_audio(path)
             )
         self._text_steps(report, "audio", (audio or {}).get("text"), "transcript")
+        self._step(report, "file_metadata", "audio", lambda: self.file_metadata.extract_media(path))
 
     @staticmethod
     def _frames(detector: Any, video_path: str, video: Dict[str, Any]) -> Dict[str, Any]:

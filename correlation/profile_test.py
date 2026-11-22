@@ -97,3 +97,26 @@ def test_load_report(tmp_path):
     path = tmp_path / "r.json"
     path.write_text(json.dumps({"steps": []}), encoding="utf-8")
     assert load_report(path) == {"steps": []}
+
+
+def test_entity_contexts_step_fills_profile():
+    from correlation.profile import profile_from_report
+
+    report = {"steps": [
+        {"name": "named_entities", "status": "ok", "data": [
+            {"text": "Brzoski", "lemma": "Brzoska", "label": "persName"},
+            {"text": "Bermuda", "lemma": "Bermuda", "label": "placeName"},
+        ]},
+        {"name": "entity_contexts", "status": "ok", "data": {
+            "persName:brzoska": {"sentences": ["Zamach na Brzoskę."], "tone": "negatywny", "in_list": False,
+                                 "embedding": [1.0, 0.0]},
+            "placeName:bermuda": {"sentences": ["Bermuda Cocos Guam"], "tone": "neutralny", "in_list": True,
+                                  "embedding": None},
+        }},
+    ]}
+
+    profile = profile_from_report(report)
+
+    assert profile.entity_contexts == {"persName:brzoska": [1.0, 0.0]}
+    assert profile.entity_tones == {"persName:brzoska": "negatywny"}
+    assert profile.entity_lists == ["placeName:bermuda"]

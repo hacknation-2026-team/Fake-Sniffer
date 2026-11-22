@@ -25,7 +25,11 @@ def text_mocks():
     entities.extract_entities.return_value = [{"text": "Tusk", "label": "persName"}]
     embedder = MagicMock()
     embedder.extract_embeddings.return_value = [chunk()]
-    return {"entity_extractor": entities, "text_embedder": embedder}
+    metadata = MagicMock()
+    metadata.extract_image.return_value = {"kind": "image", "tools": [], "ai_hints": []}
+    metadata.extract_media.return_value = {"kind": "video", "tools": [], "ai_hints": []}
+    metadata.extract_html.return_value = {"kind": "html", "trackers": [], "ad_ids": []}
+    return {"entity_extractor": entities, "text_embedder": embedder, "file_metadata": metadata}
 
 
 def image_mocks(ocr_lines=None):
@@ -62,7 +66,7 @@ def test_text_runs_only_text_extractors():
     mocks = text_mocks()
     report = make_orchestrator(**mocks).run(text="Tusk poleca platformę")
 
-    assert names(report) == ["named_entities", "text_embeddings", "sentence_rhythm", "paragraphs"]
+    assert names(report) == ["named_entities", "text_embeddings", "entity_contexts", "sentence_rhythm", "paragraphs"]
     assert {s.source for s in report.steps} == {"text"}
     assert all(s.status == "ok" for s in report.steps)
     mocks["text_embedder"].extract_embeddings.assert_called_once_with("Tusk poleca platformę", source_type="unknown")
@@ -87,7 +91,8 @@ def test_image_steps_in_order_with_ocr_text_fed_to_text_extractors():
     report = make_orchestrator(**mocks).run(image="ad.png")
 
     assert names(report) == [
-        "ocr", "named_entities", "text_embeddings", "visual_hashes", "visual_embedding", "faces",
+        "ocr", "named_entities", "text_embeddings", "entity_contexts", "visual_hashes", "visual_embedding", "faces",
+        "file_metadata",
     ]
     assert report.step("ocr").data["text"] == "Zarób 5000 zł\nKliknij"
     mocks["ocr"].extract_with_details.assert_called_once_with("ad.png", min_confidence=0.3)
@@ -157,7 +162,9 @@ def test_url_steps_use_page_text_for_text_extractors():
 
     report = make_orchestrator(web_extractor=web, **mocks).run(url="https://szybki.pl")
 
-    assert names(report) == ["web_infrastructure", "named_entities", "text_embeddings", "paragraphs"]
+    assert names(report) == [
+        "web_infrastructure", "named_entities", "text_embeddings", "entity_contexts", "paragraphs", "page_metadata",
+    ]
     assert {s.source for s in report.steps} == {"url"}
     mocks["text_embedder"].extract_embeddings.assert_called_once_with("Szok! Tusk poleca", source_type="webpage")
 
@@ -174,7 +181,7 @@ def test_url_with_partial_failures_is_marked_partial():
     assert step.status == "partial"
     assert step.error == "tls: ConnectionRefusedError: 443; rdap: HTTPError: 500"
     assert not report.has_errors
-    assert [s.status for s in report.steps[1:]] == ["skipped", "skipped", "skipped"]
+    assert [s.status for s in report.steps[1:]] == ["skipped", "skipped", "skipped", "ok"]
 
 
 def test_url_paragraphs_use_page_html_without_storing_it():
@@ -242,7 +249,8 @@ def test_video_steps_and_face_identities():
     report = make_orchestrator(config, **mocks).run(video="ad.mp4")
 
     assert names(report) == [
-        "video_features", "face_identities", "audio_features", "named_entities", "text_embeddings",
+        "video_features", "face_identities", "audio_features", "named_entities", "text_embeddings", "entity_contexts",
+        "file_metadata",
     ]
     mocks["video_extractor"].analyze.assert_called_once_with("ad.mp4", "kf")
     assert report.step("face_identities").data == [{"name": "Donald Tusk", "similarity": 0.9}, None]
@@ -283,7 +291,7 @@ def test_audio_input_runs_audio_and_transcript_text_steps():
 
     report = make_orchestrator(**mocks).run(audio="nagranie.mp3")
 
-    assert names(report) == ["audio_features", "named_entities", "text_embeddings"]
+    assert names(report) == ["audio_features", "named_entities", "text_embeddings", "entity_contexts", "file_metadata"]
     assert {s.source for s in report.steps} == {"audio"}
     mocks["audio_extractor"].analyze.assert_called_once_with("nagranie.mp3", None)
     mocks["text_embedder"].extract_embeddings.assert_called_once_with(
@@ -294,7 +302,7 @@ def test_audio_input_runs_audio_and_transcript_text_steps():
 def test_audio_without_speech_skips_text_steps():
     report = make_orchestrator(audio_extractor=audio_mock(text=""), **text_mocks()).run(audio="cisza.wav")
 
-    assert [s.status for s in report.steps] == ["ok", "skipped", "skipped"]
+    assert [s.status for s in report.steps] == ["ok", "skipped", "skipped", "ok"]
 
 
 def test_include_vectors_false_blanks_spectrogram_embedding():
@@ -346,7 +354,7 @@ def test_report_json_round_trip_keeps_polish_characters(tmp_path):
     loaded = json.loads(raw)
     assert loaded["inputs"] == {"text": "Zażółć gęślą jaźń"}
     assert [s["name"] for s in loaded["steps"]] == [
-        "named_entities", "text_embeddings", "sentence_rhythm", "paragraphs",
+        "named_entities", "text_embeddings", "entity_contexts", "sentence_rhythm", "paragraphs",
     ]
     assert loaded["created_at"].endswith("+00:00")
 
@@ -499,7 +507,7 @@ def test_image_gets_deepfake_step_after_faces():
     detector = deepfake_mock()
     config = OrchestratorConfig(deepfake=True)
     report = make_orchestrator(config, deepfake_detector=detector, **image_mocks()).run(image="a.png")
-    assert names(report)[-1] == "deepfake_image"
+    assert names(report)[-2:] == ["deepfake_image", "file_metadata"]
     assert report.step("deepfake_image").data["fake_probability"] == 0.8
     detector.analyze_image.assert_called_once_with("a.png")
 
@@ -584,7 +592,7 @@ def test_image_gets_ai_image_step_independent_of_deepfake():
     detector.analyze_image.return_value = {"file": "a.png", "fake_probability": 0.9}
     config = OrchestratorConfig(ai_image=True)
     report = make_orchestrator(config, ai_image_detector=detector, **image_mocks()).run(image="a.png")
-    assert names(report)[-1] == "ai_image"
+    assert names(report)[-2:] == ["ai_image", "file_metadata"]
     assert "deepfake_image" not in names(report)
     assert report.step("ai_image").data["fake_probability"] == 0.9
 

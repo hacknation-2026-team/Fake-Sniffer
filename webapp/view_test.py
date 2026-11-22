@@ -80,9 +80,9 @@ def test_deepfake_rows():
     ]
     rows = deepfake_rows(steps)
     assert [(r["item"], r["kind"], r["level"]) for r in rows] == [
-        ("a.png", "obraz", "high"),
-        ("f.mp4", "klatki wideo", "mid"),
-        ("video", "głos", "unknown"),
+        ("a.png", "Podmieniona twarz (zdjęcie)", "high"),
+        ("f.mp4", "Podmieniona twarz (klatki filmu)", "mid"),
+        ("video", "Sklonowany lub syntetyczny głos", "unknown"),
     ]
     assert rows[1]["mean"] == 0.2 and rows[1]["max"] == 0.5
     assert rows[2]["error"] == "boom" and rows[0]["verdict"] == "podejrzane"
@@ -139,3 +139,83 @@ def test_page_media_view_reports_download_error():
     ]
     view = page_media_view(steps)
     assert view["error"] == "OSError: dysk pełny" and view["downloaded"] is False
+
+
+def test_step_view_has_readable_labels():
+    from webapp.view import step_view
+
+    view = step_view({"name": "ai_image", "source": "page_image", "status": "ok", "data": {"fake_probability": 0.9}})
+    assert view["label"] == "Wygenerowany przez AI (zdjęcie)"
+    assert view["source_label"] == "obraz ze strony"
+    assert step_view({"name": "nowy_krok", "source": "x", "status": "ok", "data": {}})["label"] == "nowy_krok"
+
+
+def test_metadata_steps_have_summaries():
+    from webapp.view import summarize_step
+
+    image = {"name": "file_metadata", "status": "ok", "data": {
+        "ai_hints": ["manifest C2PA: obraz wygenerowany przez AI (Google)"], "tools": ["Adobe Photoshop 26.2"],
+        "export_apps": ["Adobe Photoshop"], "gps": None, "created": None}}
+    page = {"name": "page_metadata", "status": "ok", "data": {
+        "page_domain": "civicdaybook.live", "trackers": [{"kind": "facebook_pixel", "id": "123"}],
+        "ad_ids": ["1", "2"], "claimed_domains": ["gazeta.pl"], "generator": None}}
+    assert summarize_step(image).startswith("manifest C2PA: obraz wygenerowany przez AI (Google); narzędzia:")
+    assert summarize_step(page) == (
+        "civicdaybook.live; trackery: facebook_pixel 123; identyfikatory reklam: 2; podszywa się pod: gazeta.pl"
+    )
+
+
+def test_report_summary_orders_findings_by_severity():
+    from correlation.profile import Profile
+    from webapp.view import report_summary
+
+    steps = [
+        {"name": "ai_image", "source": "image", "status": "ok", "data": {"file": "a.png", "fake_probability": 0.95}},
+        {"name": "page_metadata", "source": "url", "status": "ok", "data": {"claimed_domains": ["gazeta.pl"]}},
+        {"name": "ocr", "source": "image", "status": "error", "data": None, "error": "AttributeError: x"},
+    ]
+    verdict = {
+        "verdict": "KNOWN_CAMPAIGN", "campaign": "campaign-1", "reasons": [],
+        "neighbours": [{"id": "inc-2", "label": "Brzoska", "score": 0.91, "hard": ["wspólny identyfikator Facebook Pixel 1"]}],
+    }
+    profile = Profile(domains=["civicdaybook.live"], ai_hints=["manifest C2PA: obraz wygenerowany przez AI (Google)"])
+
+    summary = report_summary(steps, verdict, profile, campaign_size=3)
+
+    assert summary["headline"]["text"] == (
+        "Materiał pasuje do znanej kampanii: campaign-1, 3 incydentów. "
+        "Najbliżej: Brzoska (inc-2), podobieństwo 0.91."
+    )
+    assert summary["level"] == "high"
+    severities = [f["severity"] for f in summary["findings"]]
+    assert severities == sorted(severities, key={"high": 0, "mid": 1, "info": 2}.get)
+    texts = [f["text"] for f in summary["findings"]]
+    assert "Twardy ślad łączący z inc-2: wspólny identyfikator Facebook Pixel 1" in texts
+    assert "Strona podszywa się pod: gazeta.pl" in texts
+    assert "Metadane: manifest C2PA: obraz wygenerowany przez AI (Google)" in texts
+    assert any(t.startswith("Wygenerowany przez AI (zdjęcie): 95%") for t in texts)
+    assert "Błąd ekstraktorów (1): Tekst odczytany z obrazu (OCR)" in texts
+    assert summary["counts"] == {"ok": 2, "partial": 0, "skipped": 0, "error": 1}
+
+
+def test_report_summary_without_verdict():
+    from correlation.profile import Profile
+    from webapp.view import report_summary
+
+    summary = report_summary([], None, Profile())
+
+    assert summary["headline"]["verdict"] is None
+    assert summary["findings"] == [] and summary["level"] == "info"
+
+
+def test_report_summary_known_without_campaign():
+    from correlation.profile import Profile
+    from webapp.view import report_summary
+
+    verdict = {"verdict": "KNOWN_CAMPAIGN", "campaign": None, "reasons": ["podobny tekst"],
+               "neighbours": [{"id": "inc-2", "label": "2", "score": 0.83, "hard": []}]}
+
+    text = report_summary([], verdict, Profile())["headline"]["text"]
+
+    assert text.startswith("Materiał jest powiązany ze znanymi incydentami, ale za słabo")
+    assert text.endswith("Najbliżej: 2 (inc-2), podobieństwo 0.83.")
