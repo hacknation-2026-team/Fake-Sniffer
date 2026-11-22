@@ -572,3 +572,124 @@ def test_prefetch_includes_deepfake_models_only_when_enabled():
     assert on["deepfake_image"] == "ok" and on["deepfake_audio"] == "ok"
     detector.load_image_model.assert_called_once_with()
     detector.load_audio_model.assert_called_once_with()
+
+
+def test_ai_image_is_off_by_default():
+    report = make_orchestrator(deepfake_detector=deepfake_mock(), **image_mocks()).run(image="a.png")
+    assert not [n for n in names(report) if n.startswith("ai_")]
+
+
+def test_image_gets_ai_image_step_independent_of_deepfake():
+    detector = deepfake_mock()
+    detector.analyze_image.return_value = {"file": "a.png", "fake_probability": 0.9}
+    config = OrchestratorConfig(ai_image=True)
+    report = make_orchestrator(config, ai_image_detector=detector, **image_mocks()).run(image="a.png")
+    assert names(report)[-1] == "ai_image"
+    assert "deepfake_image" not in names(report)
+    assert report.step("ai_image").data["fake_probability"] == 0.9
+
+
+def test_video_gets_ai_frames_step():
+    detector = deepfake_mock()
+    mocks = video_mocks()
+    mocks["video_extractor"].analyze.return_value["keyframes"] = [{"file_path": "kf/1.jpg"}]
+    config = OrchestratorConfig(ai_image=True, keyframes_dir="kf")
+    report = make_orchestrator(config, ai_image_detector=detector, **mocks).run(video="/x/ad.mp4")
+    assert report.step("ai_frames").data["max_fake_probability"] == 0.6
+    detector.analyze_images.assert_called_once_with(["kf/1.jpg"])
+    assert "deepfake_frames" not in names(report)
+
+
+def test_ai_image_detector_is_built_from_config():
+    config = OrchestratorConfig(
+        ai_image=True, ai_image_model="m/ai", ai_image_fake_label="LABEL_1", models_dir="modele", use_gpu=True
+    )
+    with patch("feature_extractor.ai_image_extractor.AiImageDetector") as detector_class:
+        detector = Orchestrator(config).ai_image_detector
+    detector_class.assert_called_once_with(model="m/ai", device="cuda", models_dir="modele", fake_label="LABEL_1")
+    assert detector is detector_class.return_value
+
+
+def test_prefetch_includes_ai_image_model_only_when_enabled():
+    detector = MagicMock()
+    off = make_orchestrator(OrchestratorConfig(), ai_image_detector=detector, **prefetch_mocks()).prefetch()
+    assert "ai_image" not in off
+    on = make_orchestrator(OrchestratorConfig(ai_image=True), ai_image_detector=detector, **prefetch_mocks()).prefetch()
+    assert on["ai_image"] == "ok"
+    detector.load_image_model.assert_called_once_with()
+
+
+def page_web(media, final_url="https://szybki.pl/oferta"):
+    web = MagicMock()
+    web.analyze.return_value.to_dict.return_value = {
+        "page_text": "Okazja",
+        "page_html": "<html></html>",
+        "final_url": final_url,
+        "errors": [],
+        "media": media,
+    }
+    return web
+
+
+def page_media_mocks(items):
+    downloader = MagicMock()
+    downloader.download.return_value = items
+    paragraphs = MagicMock()
+    return {"page_media_downloader": downloader, "paragraphs": paragraphs, **image_mocks(), **video_mocks()}
+
+
+MEDIA = {
+    "images": [{"url": "https://cdn/a.jpg"}],
+    "videos": [{"url": "https://cdn/v.mp4", "kind": "file"}],
+    "inline_images": 0,
+    "emojis": {"total": 0},
+}
+
+
+def test_page_media_is_off_by_default():
+    mocks = page_media_mocks([])
+    report = make_orchestrator(web_extractor=page_web(MEDIA), **mocks).run(url="https://szybki.pl")
+    assert "page_media" not in names(report)
+    mocks["page_media_downloader"].download.assert_not_called()
+
+
+def test_page_media_runs_image_and_video_steps_with_page_sources(tmp_path):
+    items = [
+        {"kind": "image", "url": "https://cdn/a.jpg", "status": "ok", "file_path": "/m/image_1.jpg"},
+        {"kind": "image", "url": "https://cdn/b.jpg", "status": "skipped", "error": "za mały"},
+        {"kind": "video", "url": "https://cdn/v.mp4", "status": "ok", "file_path": "/m/video_1.mp4"},
+    ]
+    mocks = page_media_mocks(items)
+    config = OrchestratorConfig(page_media=True, page_media_dir=str(tmp_path), ai_image=True)
+    mocks["ai_image_detector"] = deepfake_mock()
+    report = make_orchestrator(config, web_extractor=page_web(MEDIA), **mocks).run(url="https://szybki.pl")
+
+    assert report.step("page_media", "url").data == items
+    assert report.step("ocr", "page_image") is not None
+    assert report.step("ai_image", "page_image").status == "ok"
+    assert report.step("video_features", "page_video") is not None
+    assert "ocr" not in [s.name for s in report.steps if s.source == "image"]
+    assert [s.source for s in report.steps if s.name == "ocr"] == ["page_image"]
+    assert mocks["ai_image_detector"].analyze_image.call_count == 1
+
+    folder = mocks["page_media_downloader"].download.call_args[0][1]
+    assert str(folder).startswith(str(tmp_path))
+    keyframes_dir = mocks["video_extractor"].analyze.call_args[0][1]
+    assert keyframes_dir.startswith(str(folder)) and keyframes_dir.endswith("video_1")
+
+
+def test_page_media_skips_when_page_has_no_media(tmp_path):
+    empty = {"images": [], "videos": [], "inline_images": 0, "emojis": {"total": 0}}
+    mocks = page_media_mocks([])
+    config = OrchestratorConfig(page_media=True, page_media_dir=str(tmp_path))
+    report = make_orchestrator(config, web_extractor=page_web(empty), **mocks).run(url="https://szybki.pl")
+    assert "page_media" not in names(report)
+
+
+def test_page_media_download_failure_is_a_step_error(tmp_path):
+    mocks = page_media_mocks([])
+    mocks["page_media_downloader"].download.side_effect = OSError("dysk pełny")
+    config = OrchestratorConfig(page_media=True, page_media_dir=str(tmp_path))
+    report = make_orchestrator(config, web_extractor=page_web(MEDIA), **mocks).run(url="https://szybki.pl")
+    assert report.step("page_media", "url").status == "error"
+    assert "text_embeddings" in names(report)

@@ -199,5 +199,45 @@ def test_analysis_view_has_deepfake_table(workspace):
 
 def test_deepfake_can_be_disabled_in_settings(settings, fake):
     settings.deepfake = False
+    settings.ai_image = False
     result = Workspace(settings, lambda: fake).analyze("https://scam.top/x", [])
     assert result["deepfake_enabled"] is False and result["deepfake"] == []
+
+
+def test_page_media_steps_keep_their_page_sources(settings):
+    page_steps = [
+        {"name": "web_infrastructure", "source": "url", "status": "ok",
+         "data": {"registered_domain": "scam.top", "final_url": "https://scam.top/",
+                  "media": {"images": [{"url": "https://cdn/a.jpg"}], "videos": [], "inline_images": 0,
+                            "emojis": {"total": 2, "unique": 1, "density": 3.0, "top": [["🔥", 2]]}}}},
+        {"name": "page_media", "source": "url", "status": "ok",
+         "data": [{"kind": "image", "url": "https://cdn/a.jpg", "status": "ok", "file_path": "/x/image_1.jpg",
+                   "width": 640, "height": 480}]},
+        {"name": "ai_image", "source": "page_image", "status": "ok",
+         "data": {"file": "image_1.jpg", "fake_probability": 0.95, "model": "m"}},
+    ]
+
+    class PageOrchestrator(FakeOrchestrator):
+        def run(self, **inputs):
+            return SimpleNamespace(to_dict=lambda: {"steps": page_steps})
+
+    result = Workspace(settings, lambda: PageOrchestrator()).analyze("https://scam.top/", [])
+    assert [s["source"] for s in result["steps"]] == ["url", "url", "page_image"]
+    row = result["deepfake"][0]
+    assert (row["item"], row["kind"], row["origin"]) == ("https://cdn/a.jpg", "obraz (AI)", "strona")
+    media = result["page_media"]
+    assert media["images"] == 1 and media["downloaded"] and media["emojis"]["total"] == 2
+    assert media["items"][0]["status_label"] == "przeanalizowano"
+    assert result["page_media_enabled"] is True
+
+
+def test_default_orchestrator_gets_page_media_and_ai_settings(settings):
+    from unittest.mock import patch
+
+    from webapp.service import _default_orchestrator
+
+    with patch("feature_extractor.orchestrator.Orchestrator") as orchestrator:
+        _default_orchestrator(settings)
+    config = orchestrator.call_args[0][0]
+    assert config.ai_image and config.page_media
+    assert config.page_media_dir == str(settings.data_dir / "page_media")

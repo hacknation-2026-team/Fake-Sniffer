@@ -34,6 +34,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="oceń obrazy, klatki i głos klasyfikatorami deepfake (pobiera ponad 1 GB modeli)",
     )
+    parser.add_argument(
+        "--ai-image",
+        action="store_true",
+        help="oceń obrazy i klatki detektorem obrazów generowanych przez AI (ok. 400 MB modelu)",
+    )
+    parser.add_argument(
+        "--page-media",
+        action="store_true",
+        help="pobierz obrazy i filmy ze strony (--url) i przepuść je przez ekstraktory obrazu i wideo",
+    )
+    parser.add_argument("--page-media-dir", default="page_media_out", help="gdzie zapisać media ze strony")
     parser.add_argument("--faces-dir", help="katalog z osobami referencyjnymi: Imie_Nazwisko/*.jpg")
     parser.add_argument("--keyframes-dir", default="keyframes_out", help="gdzie zapisać klatki z wideo")
     parser.add_argument(
@@ -103,6 +114,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         spectrograms_dir=args.spectrograms_dir,
         models_dir=args.models_dir,
         deepfake=args.deepfake,
+        ai_image=args.ai_image,
+        page_media=args.page_media,
+        page_media_dir=args.page_media_dir,
     )
     if args.download_models:
         return download_models(Orchestrator(config))

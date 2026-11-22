@@ -16,3 +16,10 @@ def test_defaults_and_overrides():
 def test_deepfake_is_on_unless_disabled():
     assert settings_from(build_parser().parse_args([])).deepfake is True
     assert settings_from(build_parser().parse_args(["--no-deepfake"])).deepfake is False
+
+
+def test_ai_image_and_page_media_are_on_unless_disabled():
+    default = settings_from(build_parser().parse_args([]))
+    assert default.ai_image is True and default.page_media is True
+    off = settings_from(build_parser().parse_args(["--no-ai-image", "--no-page-media"]))
+    assert off.ai_image is False and off.page_media is False

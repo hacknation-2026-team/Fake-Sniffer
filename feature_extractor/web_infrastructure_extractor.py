@@ -3,6 +3,7 @@ import dns.resolver
 import hashlib
 import ipaddress
 import os
+import re
 import requests
 import socket
 import ssl
@@ -18,9 +19,10 @@ from html.parser import HTMLParser
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from .model_cache import PLAYWRIGHT, model_dir
+from .page_media import MAX_REDIRECTS, check_public_url, extract_media
 
 _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
 
@@ -100,6 +102,7 @@ class InfrastructureReport:
     dom_fingerprint: Optional[DomFingerprint] = None
     page_text: Optional[str] = None
     page_html: Optional[str] = None
+    media: Optional[Dict[str, Any]] = None
     rdap: Optional[RdapInfo] = None
     dns: Optional[DnsInfo] = None
     tls: Optional[CertInfo] = None
@@ -243,11 +246,13 @@ class WebInfrastructureExtractor:
 
     def fetch_page(self, url: str) -> Dict[str, Any]:
         """
-        Otwiera URL w headless Chromium i zwraca {"hops": [...], "final_url": ..., "html": ...}.
+        Otwiera URL w headless Chromium i zwraca {"hops": [...], "final_url": ..., "html": ..., "resources": [...]}.
+        W resources są obrazy i media, które strona faktycznie pobrała.
         W hops lądują wszystkie nawigacje głównej ramki: 30x, meta refresh i przekierowania z JS.
         """
         self.validate_url(url)
         hops: List[RedirectHop] = []
+        resources: List[Dict[str, Any]] = []
 
         self._use_browser_cache()
         with sync_playwright() as playwright:
@@ -259,6 +264,14 @@ class WebInfrastructureExtractor:
 
                 def on_response(response: Any) -> None:
                     request = response.request
+                    if request.resource_type in ("image", "media"):
+                        resources.append(
+                            {
+                                "url": response.url,
+                                "type": request.resource_type,
+                                "content_type": response.headers.get("content-type"),
+                            }
+                        )
                     if request.is_navigation_request() and request.frame == page.main_frame:
                         hops.append(
                             {
@@ -269,11 +282,71 @@ class WebInfrastructureExtractor:
                         )
 
                 page.on("response", on_response)
-                page.goto(url, wait_until="load", timeout=int(self.timeout * 1000))
-                page.wait_for_timeout(self.settle_ms)
-                return {"hops": hops, "final_url": page.url, "html": page.content()}
+                warning = None
+                try:
+                    page.goto(url, wait_until="load", timeout=int(self.timeout * 1000))
+                    page.wait_for_timeout(self.settle_ms)
+                except PlaywrightError as exc:
+                    if not hops:
+                        raise
+                    warning = f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
+                try:
+                    final_url, html = page.url, page.content()
+                except PlaywrightError:
+                    final_url, html = hops[-1]["url"], ""
+                result = {"hops": hops, "final_url": final_url, "html": html, "resources": resources}
+                if warning:
+                    result["warning"] = f"strona załadowana częściowo ({warning})"
+                return result
             finally:
                 browser.close()
+
+    META_REFRESH = re.compile(
+        r"<meta[^>]+http-equiv=[\"']?refresh[\"']?[^>]*content=[\"']?\s*\d+\s*;\s*url=([^\"'>\s]+)", re.I
+    )
+    MAX_HTML_BYTES = 3 * 1024 * 1024
+
+    def fetch_page_http(self, url: str) -> Dict[str, Any]:
+        """
+        Zapasowa ścieżka bez przeglądarki: idzie za 30x i meta refresh aż do ostatniej strony
+        i pobiera jej HTML. Bez JS, więc strony budowane skryptem dadzą mało treści.
+        Każdy adres po drodze musi być publiczny.
+        """
+        hops: List[RedirectHop] = []
+        current = url
+        for _ in range(MAX_REDIRECTS * 2 + 1):
+            self.validate_url(current)
+            check_public_url(current)
+            response = requests.get(
+                current,
+                headers={"User-Agent": self.user_agent},
+                timeout=self.timeout,
+                allow_redirects=False,
+                stream=True,
+                verify=False,
+            )
+            try:
+                location = response.headers.get("location")
+                hops.append({"url": current, "status": int(response.status_code), "location": location})
+                if location and 300 <= response.status_code < 400:
+                    current = urljoin(current, location)
+                    continue
+                body = response.raw.read(self.MAX_HTML_BYTES, decode_content=True)
+                html = body.decode(response.encoding or "utf-8", errors="replace")
+            finally:
+                response.close()
+            refresh = self.META_REFRESH.search(html)
+            if refresh:
+                current = urljoin(current, refresh.group(1))
+                continue
+            kind = (response.headers.get("content-type") or "").lower()
+            return {
+                "hops": hops,
+                "final_url": current,
+                "html": html if "html" in kind or not kind else "",
+                "resources": [],
+            }
+        raise ValueError("zbyt wiele przekierowań")
 
     # --- odcisk DOM ---
 
@@ -492,6 +565,19 @@ class WebInfrastructureExtractor:
 
     # --- całość ---
 
+    def _load_page(self, url: str, report: "InfrastructureReport") -> Dict[str, Any]:
+        """Przeglądarka, a gdy zawiedzie, zwykłe HTTP z podążaniem za przekierowaniami."""
+        try:
+            page = self.fetch_page(url)
+        except Exception as exc:
+            first_line = (str(exc).strip().splitlines() or [""])[0]
+            report.errors.append(f"browser: {type(exc).__name__}: {first_line}")
+            page = self.fetch_page_http(url)
+            report.errors.append("użyto zapasowego pobrania HTTP (bez JavaScript)")
+        if page.get("warning"):
+            report.errors.append(page["warning"])
+        return page
+
     def analyze(self, url: str, fetch_page: bool = True) -> InfrastructureReport:
         """
         Pełna analiza URL-a, bez wyjątków z kroków sieciowych (błędy idą do `errors`).
@@ -508,15 +594,18 @@ class WebInfrastructureExtractor:
 
         if fetch_page:
             try:
-                page = self.fetch_page(url)
+                page = self._load_page(url, report)
                 report.redirect_chain = page["hops"]
                 report.final_url = page["final_url"]
                 report.dom_fingerprint = self.dom_fingerprint(page["html"])
                 report.page_text = self.visible_text(page["html"])
                 report.page_html = page["html"]
+                report.media = extract_media(
+                    page["html"], page["final_url"], report.page_text, page.get("resources")
+                )
                 report.host = urlparse(page["final_url"]).hostname or report.host
             except Exception as exc:
-                report.errors.append(f"browser: {type(exc).__name__}: {exc}")
+                report.errors.append(f"page: {type(exc).__name__}: {exc}")
 
         host = report.host
         report.registered_domain = self.registered_domain(host)

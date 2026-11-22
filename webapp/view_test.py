@@ -86,3 +86,56 @@ def test_deepfake_rows():
     ]
     assert rows[1]["mean"] == 0.2 and rows[1]["max"] == 0.5
     assert rows[2]["error"] == "boom" and rows[0]["verdict"] == "podejrzane"
+
+
+def test_summary_of_long_error_is_one_short_line():
+    error = "browser: TargetClosedError: " + "--flag " * 200 + "\nCall log:\n- <kill>"
+    text = summarize_step({"name": "web_infrastructure", "status": "error", "data": None, "error": error})
+    assert "\n" not in text and len(text) <= 161
+
+
+def test_page_media_summaries():
+    pages = [
+        {"kind": "image", "status": "ok"},
+        {"kind": "video", "status": "ok"},
+        {"kind": "image", "status": "skipped"},
+    ]
+    assert summarize_step({"name": "page_media", "status": "ok", "data": pages}) == "pobrano obrazy: 1, filmy: 1, pominięto: 1"
+    web = {"final_url": "https://a.pl/", "media": {"images": [1, 2], "videos": [1], "emojis": {"total": 4}}}
+    text = summarize_step({"name": "web_infrastructure", "status": "ok", "data": web})
+    assert "obrazy: 2, filmy: 1" in text and "emotikony: 4" in text
+    ai = {"name": "ai_image", "status": "ok", "data": {"fake_probability": 0.5}}
+    assert "50%" in summarize_step(ai)
+
+
+def test_page_media_view_without_download_lists_found_items():
+    from webapp.view import page_media_view
+
+    media = {"images": [{"url": "https://a/x.jpg"}], "videos": [{"url": "https://a/v.mp4"}], "inline_images": 1,
+             "emojis": {"total": 0, "unique": 0, "density": 0, "top": []}}
+    steps = [{"name": "web_infrastructure", "data": {"media": media}, "status": "ok"}]
+    view = page_media_view(steps)
+    assert view["downloaded"] is False
+    assert [(i["kind"], i["status_label"]) for i in view["items"]] == [("image", "znaleziono"), ("video", "znaleziono")]
+
+
+def test_page_media_view_is_none_for_empty_page():
+    from webapp.view import page_media_view
+
+    empty = {"images": [], "videos": [], "inline_images": 0, "emojis": {"total": 0, "unique": 0, "density": 0, "top": []}}
+    assert page_media_view([{"name": "web_infrastructure", "data": {"media": empty}, "status": "ok"}]) is None
+    assert page_media_view([{"name": "web_infrastructure", "data": {}, "status": "ok"}]) is None
+    assert page_media_view([]) is None
+
+
+def test_page_media_view_reports_download_error():
+    from webapp.view import page_media_view
+
+    media = {"images": [{"url": "https://a/x.jpg"}], "videos": [], "inline_images": 0,
+             "emojis": {"total": 0, "unique": 0, "density": 0, "top": []}}
+    steps = [
+        {"name": "web_infrastructure", "data": {"media": media}, "status": "ok"},
+        {"name": "page_media", "data": None, "status": "error", "error": "OSError: dysk pełny"},
+    ]
+    view = page_media_view(steps)
+    assert view["error"] == "OSError: dysk pełny" and view["downloaded"] is False

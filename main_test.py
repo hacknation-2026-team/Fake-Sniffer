@@ -189,3 +189,16 @@ def test_deepfake_flag_is_mapped_to_config(tmp_path):
     main.main(["--text", "x", "--out", str(tmp_path / "a.json")])
     main.main(["--text", "x", "--deepfake", "--out", str(tmp_path / "b.json")])
     assert [o.config.deepfake for o in FakeOrchestrator.instances] == [False, True]
+
+
+def test_ai_image_flag_is_mapped_to_config(tmp_path):
+    main.main(["--text", "x", "--out", str(tmp_path / "a.json")])
+    main.main(["--text", "x", "--ai-image", "--out", str(tmp_path / "b.json")])
+    assert [o.config.ai_image for o in FakeOrchestrator.instances] == [False, True]
+
+
+def test_page_media_flags_are_mapped_to_config(tmp_path):
+    main.main(["--url", "https://a.example", "--out", str(tmp_path / "a.json")])
+    main.main(["--url", "https://a.example", "--page-media", "--page-media-dir", "obrazy", "--out", str(tmp_path / "b.json")])
+    first, second = FakeOrchestrator.instances
+    assert (first.config.page_media, second.config.page_media, second.config.page_media_dir) == (False, True, "obrazy")

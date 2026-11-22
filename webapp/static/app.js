@@ -146,13 +146,13 @@ function mainInfo(r) {
 function deepfakeCard(r) {
   if (!r.deepfake_enabled) return null;
   if (!r.deepfake.length) {
-    return h("div", { class: "card" }, h("h2", {}, "Analiza deepfake"),
+    return h("div", { class: "card" }, h("h2", {}, "Deepfake i obrazy AI"),
       h("p", { class: "muted" }, "Brak obrazu, filmu ani nagrania do oceny. Dodaj plik, żeby sprawdzić, czy jest syntetyczny."));
   }
   const rows = r.deepfake.map((row) => {
     const value = row.max;
     return h("tr", {},
-      h("td", {}, row.item),
+      h("td", { class: "wide", title: row.item }, h("span", {}, row.item), row.origin ? h("span", { class: "muted small" }, " (ze strony)") : null),
       h("td", {}, row.kind),
       h("td", { style: "min-width:180px" }, value == null
         ? h("span", { class: row.error ? "error" : "muted" }, row.error || "nie rozpoznano etykiety")
@@ -161,10 +161,34 @@ function deepfakeCard(r) {
       h("td", {}, h("span", { class: `badge ${DEEPFAKE_BADGES[row.level]}` }, row.verdict)));
   });
   return h("div", { class: "card" },
-    h("h2", {}, "Analiza deepfake"),
+    h("h2", {}, "Deepfake i obrazy AI"),
     h("table", {}, h("thead", {}, h("tr", {}, ["Element", "Rodzaj", "Prawdopodobieństwo fałszerstwa", "Ocena"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)),
     h("p", { class: "muted small", style: "margin-top:12px" },
       "To wskaźnik z gotowych klasyfikatorów, a nie dowód. Modele uczono na konkretnych zbiorach i na nowych generatorach oraz po rekompresji mylą się częściej, a głosy modele znają głównie z angielskiego."));
+}
+
+function pageMediaCard(r) {
+  const m = r.page_media;
+  if (!m) return null;
+  const e = m.emojis;
+  const note = m.error ? h("p", { class: "error small" }, `Pobieranie mediów nie powiodło się: ${m.error}`)
+    : !m.downloaded ? h("p", { class: "muted small" }, r.page_media_enabled
+      ? "Nie pobrano mediów. Ocena obrazów i filmów ze strony nie została wykonana."
+      : "Pobieranie mediów jest wyłączone (uruchom GUI bez --no-page-media).") : null;
+  const rows = m.items.map((item) => h("tr", {},
+    h("td", {}, item.kind === "image" ? "obraz" : "film"),
+    h("td", { class: "wide", title: item.url }, h("span", {}, item.url)),
+    h("td", {}, item.status_label, item.error ? h("span", { class: "muted small" }, ` (${item.error})`) : null),
+    h("td", {}, item.width ? `${item.width}×${item.height}` : "")));
+  return h("div", { class: "card" },
+    h("h2", {}, "Obrazy, filmy i emotikony ze strony"),
+    h("p", {}, `Znaleziono ${m.images} obrazów i ${m.videos} filmów`, m.inline_images ? `, ${m.inline_images} obrazów wbudowanych w kod` : "", "."),
+    h("p", {}, e.total
+      ? [`Emotikony: ${e.total} (${e.unique} różnych, ${e.density} na 1000 znaków). `, h("span", { class: "chips", style: "display:inline-flex;margin:0" }, e.top.map(([emoji, n]) => h("span", { class: "chip" }, `${emoji} ×${n}`)))]
+      : "Emotikony: brak."),
+    note,
+    rows.length ? h("table", {}, h("thead", {}, h("tr", {}, ["Rodzaj", "Adres", "Status", "Rozmiar"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)) : null,
+    h("p", { class: "muted small", style: "margin-top:10px" }, "Pobrane obrazy i filmy przechodzą przez te same ekstraktory co wgrane pliki, a ich ocena jest w tabeli deepfake i obrazów AI powyżej."));
 }
 
 function extractorTable(steps) {
@@ -175,7 +199,7 @@ function extractorTable(steps) {
         h("td", {}, h("span", { class: `status ${step.status}` }), step.name),
         h("td", {}, step.source),
         h("td", {}, step.duration_sec != null ? `${step.duration_sec.toFixed(1)} s` : ""),
-        h("td", { class: step.status === "error" ? "error" : "" }, step.summary)),
+        h("td", { class: "wide" + (step.status === "error" ? " error" : ""), title: step.summary }, h("span", {}, step.summary))),
       h("tr", { hidden: false }, h("td", { colspan: 4, style: "padding:0;border:0" }, raw)),
     ];
   });
@@ -209,6 +233,7 @@ function renderResult(root, r) {
       h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Plik / nazwa pliku / URL"), h("th", {}, "Przydział do kampanii"))),
         h("tbody", {}, h("tr", {}, h("td", {}, r.name), h("td", {}, campaign))))),
     deepfakeCard(r),
+    pageMediaCard(r),
     mainInfo(r),
     h("div", { class: "card" }, h("h2", {}, "Użyte ekstraktory"), h("p", { class: "muted small" }, "Kliknij wiersz, żeby zobaczyć dane kroku."), extractorTable(r.steps)),
     addToBase(r));

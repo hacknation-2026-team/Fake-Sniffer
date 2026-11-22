@@ -138,7 +138,7 @@ def _safe(steps: List[Dict[str, Any]], name: str, source: str, action: Callable[
 
 def run_input(orchestrator: Any, source: str, **inputs: str) -> List[Dict[str, Any]]:
     steps = orchestrator.run(**inputs).to_dict()["steps"]
-    return [{**step, "source": source} for step in steps]
+    return [step if step["source"].startswith("page_") else {**step, "source": source} for step in steps]
 
 
 def build_case_report(

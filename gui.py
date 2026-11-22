@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--models-dir", help="katalog na pobrane modele")
     parser.add_argument("--gpu", action="store_true", help="użyj GPU (CUDA)")
     parser.add_argument("--no-deepfake", action="store_true", help="wyłącz analizę deepfake (oszczędza modele)")
+    parser.add_argument("--no-ai-image", action="store_true", help="wyłącz detektor obrazów generowanych przez AI")
+    parser.add_argument("--no-page-media", action="store_true", help="nie pobieraj obrazów i filmów ze stron")
     parser.add_argument("--no-browser", action="store_true", help="nie otwieraj przeglądarki")
     return parser
 
@@ -31,6 +33,8 @@ def settings_from(args: argparse.Namespace) -> Settings:
         faces_dir=args.faces_dir,
         use_gpu=args.gpu,
         deepfake=not args.no_deepfake,
+        ai_image=not args.no_ai_image,
+        page_media=not args.no_page_media,
     )
 
 

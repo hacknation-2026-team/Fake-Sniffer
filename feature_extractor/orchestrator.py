@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -10,11 +11,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence,
 
 if TYPE_CHECKING:
     from .audio_feature_extractor import AudioFeatureExtractor
+    from .ai_image_extractor import AiImageDetector
     from .deepfake_extractor import DeepfakeDetector
     from .face_identity_extractor import FaceIdentityExtractor, ReferenceFaceDatabase
     from .keyframe_extractor import LightweightKeyframeExtractor
     from .named_entity_extractor import NamedEntityExtractor
     from .ocr_text_extractor import TextExtractor
+    from .page_media import MediaDownloader
     from .paragraph_extractor import ParagraphExtractor
     from .sentence_rhythm_extractor import SentenceRhythmExtractor
     from .spectrogram_extractor import SpectrogramExtractor
@@ -52,6 +55,11 @@ class OrchestratorConfig:
     deepfake_image_model: Optional[str] = None
     deepfake_audio_model: Optional[str] = None
     deepfake_audio_fake_label: Optional[str] = None
+    ai_image: bool = False
+    ai_image_model: Optional[str] = None
+    ai_image_fake_label: Optional[str] = None
+    page_media: bool = False
+    page_media_dir: str = "page_media_out"
 
 
 @dataclass
@@ -248,6 +256,12 @@ class Orchestrator:
         return AudioFeatureExtractor(self.speech, self.spectrogram, self.sentence_rhythm)
 
     @cached_property
+    def page_media_downloader(self) -> MediaDownloader:
+        from .page_media import MediaDownloader
+
+        return MediaDownloader()
+
+    @cached_property
     def deepfake_detector(self) -> DeepfakeDetector:
         from .deepfake_extractor import AUDIO_MODEL, IMAGE_MODEL, DeepfakeDetector
 
@@ -257,6 +271,17 @@ class Orchestrator:
             device=self._device,
             models_dir=self.config.models_dir,
             audio_fake_label=self.config.deepfake_audio_fake_label,
+        )
+
+    @cached_property
+    def ai_image_detector(self) -> AiImageDetector:
+        from .ai_image_extractor import AI_IMAGE_MODEL, AiImageDetector
+
+        return AiImageDetector(
+            model=self.config.ai_image_model or AI_IMAGE_MODEL,
+            device=self._device,
+            models_dir=self.config.models_dir,
+            fake_label=self.config.ai_image_fake_label,
         )
 
     def prefetch(self) -> Dict[str, str]:
@@ -273,6 +298,8 @@ class Orchestrator:
         if self.config.deepfake:
             loaders["deepfake_image"] = lambda: self.deepfake_detector.load_image_model()
             loaders["deepfake_audio"] = lambda: self.deepfake_detector.load_audio_model()
+        if self.config.ai_image:
+            loaders["ai_image"] = lambda: self.ai_image_detector.load_image_model()
         statuses: Dict[str, str] = {}
         for name, load in loaders.items():
             try:
@@ -359,62 +386,89 @@ class Orchestrator:
             report.steps[-1].status = "partial"
             report.steps[-1].error = "; ".join(data["errors"])
         self._text_steps(report, "url", (data or {}).get("page_text"), "webpage")
-        if not page.get("html"):
+        if page.get("html"):
+            self._step(
+                report,
+                "paragraphs",
+                "url",
+                lambda: self.paragraphs.analyze_html(page["html"], url=data.get("final_url") or url),
+            )
+        else:
             report.steps.append(StepResult("paragraphs", "url", "skipped", 0.0, None, "brak HTML strony"))
+        self._run_page_media(report, data, url)
+
+    def _run_page_media(self, report: Report, data: Optional[Dict[str, Any]], url: str) -> None:
+        """Pobiera obrazy i filmy ze strony i puszcza je przez te same kroki co wgrane pliki."""
+        media = (data or {}).get("media")
+        if not self.config.page_media or not media or not (media["images"] or media["videos"]):
             return
-        self._step(
-            report,
-            "paragraphs",
-            "url",
-            lambda: self.paragraphs.analyze_html(page["html"], url=data.get("final_url") or url),
+
+        key = hashlib.sha1((data.get("final_url") or url).encode()).hexdigest()[:10]
+        folder = Path(self.config.page_media_dir) / key
+        items = self._step(
+            report, "page_media", "url", lambda: self.page_media_downloader.download(media, folder)
         )
+        for item in items or []:
+            if item["status"] != "ok":
+                continue
+            if item["kind"] == "image":
+                self._run_image(report, item["file_path"], "page_image")
+            else:
+                frames = folder / "keyframes" / Path(item["file_path"]).stem
+                self._run_video(report, item["file_path"], "page_video", str(frames))
 
     def _analyze_page(self, url: str, page: Dict[str, Any]) -> Dict[str, Any]:
         data = self.web_extractor.analyze(url).to_dict()
         page["html"] = data.pop("page_html", None)
         return data
 
-    def _run_image(self, report: Report, path: str) -> None:
-        ocr = self._step(report, "ocr", "image", lambda: self._read_image_text(path))
-        self._text_steps(report, "image", (ocr or {}).get("text"), "ocr")
-        self._step(report, "visual_hashes", "image", lambda: self.hasher.compute(path))
+    def _run_image(self, report: Report, path: str, source: str = "image") -> None:
+        ocr = self._step(report, "ocr", source, lambda: self._read_image_text(path))
+        self._text_steps(report, source, (ocr or {}).get("text"), "ocr")
+        self._step(report, "visual_hashes", source, lambda: self.hasher.compute(path))
         self._step(
-            report, "visual_embedding", "image", lambda: self.visual_embedder.extract_embedding(path)
+            report, "visual_embedding", source, lambda: self.visual_embedder.extract_embedding(path)
         )
-        self._step(report, "faces", "image", lambda: self._find_faces(path))
+        self._step(report, "faces", source, lambda: self._find_faces(path))
         if self.config.deepfake:
             self._step(
-                report, "deepfake_image", "image", lambda: self.deepfake_detector.analyze_image(path)
+                report, "deepfake_image", source, lambda: self.deepfake_detector.analyze_image(path)
             )
+        if self.config.ai_image:
+            self._step(report, "ai_image", source, lambda: self.ai_image_detector.analyze_image(path))
 
-    def _run_video(self, report: Report, path: str) -> None:
+    def _run_video(
+        self, report: Report, path: str, source: str = "video", keyframes_dir: Optional[str] = None
+    ) -> None:
         data = self._step(
             report,
             "video_features",
-            "video",
-            lambda: self.video_extractor.analyze(path, self.config.keyframes_dir),
+            source,
+            lambda: self.video_extractor.analyze(path, keyframes_dir or self.config.keyframes_dir),
         )
         if data and self.config.reference_faces_dir:
             self._step(
                 report,
                 "face_identities",
-                "video",
+                source,
                 lambda: self._identify(data["face_embeddings"]),
             )
         if self.config.deepfake and data and data.get("keyframes"):
-            self._step(report, "deepfake_frames", "video", lambda: self._deepfake_frames(path, data))
+            self._step(report, "deepfake_frames", source, lambda: self._frames(self.deepfake_detector, path, data))
+        if self.config.ai_image and data and data.get("keyframes"):
+            self._step(report, "ai_frames", source, lambda: self._frames(self.ai_image_detector, path, data))
         audio = self._step(
             report,
             "audio_features",
-            "video",
+            source,
             lambda: self.audio_extractor.analyze(path, self.config.spectrograms_dir),
         )
         if self.config.deepfake:
             self._step(
-                report, "deepfake_audio", "video", lambda: self.deepfake_detector.analyze_audio(path)
+                report, "deepfake_audio", source, lambda: self.deepfake_detector.analyze_audio(path)
             )
         text, source_type = _video_text((data or {}).get("ocr_text"), (audio or {}).get("text"))
-        self._text_steps(report, "video", text, source_type)
+        self._text_steps(report, source, text, source_type)
 
     def _run_audio(self, report: Report, path: str) -> None:
         audio = self._step(
@@ -429,9 +483,10 @@ class Orchestrator:
             )
         self._text_steps(report, "audio", (audio or {}).get("text"), "transcript")
 
-    def _deepfake_frames(self, video_path: str, video: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _frames(detector: Any, video_path: str, video: Dict[str, Any]) -> Dict[str, Any]:
         paths = [frame["file_path"] for frame in video["keyframes"]]
-        return {"file": Path(video_path).name, **self.deepfake_detector.analyze_images(paths)}
+        return {"file": Path(video_path).name, **detector.analyze_images(paths)}
 
     def _read_image_text(self, path: str) -> Dict[str, Any]:
         lines = self.ocr.extract_with_details(path, min_confidence=self.config.min_ocr_confidence)

@@ -2,6 +2,7 @@ import dns.exception
 import dns.resolver
 import os
 import pytest
+from feature_extractor.page_media import check_public_url
 import requests
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -347,13 +348,37 @@ def make_playwright_mock(page_steps):
     return factory, browser, page
 
 
-def nav_response(page, url, status, location=None, navigation=True, frame=None):
+def nav_response(page, url, status, location=None, navigation=True, frame=None, resource_type="document", content_type=None):
+    headers = {"location": location} if location else {}
+    if content_type:
+        headers["content-type"] = content_type
     return SimpleNamespace(
         url=url,
         status=status,
-        headers={"location": location} if location else {},
-        request=SimpleNamespace(is_navigation_request=lambda: navigation, frame=frame or page.main_frame),
+        headers=headers,
+        request=SimpleNamespace(
+            is_navigation_request=lambda: navigation,
+            frame=frame or page.main_frame,
+            resource_type=resource_type,
+        ),
     )
+
+
+def test_fetch_page_collects_image_and_media_resources(extractor):
+    def steps(handler, page):
+        handler(nav_response(page, "https://landing.example/", 200))
+        handler(nav_response(page, "https://cdn.example/a.jpg", 200, navigation=False, resource_type="image", content_type="image/jpeg"))
+        handler(nav_response(page, "https://cdn.example/v.mp4", 200, navigation=False, resource_type="media", content_type="video/mp4"))
+        handler(nav_response(page, "https://cdn.example/app.js", 200, navigation=False, resource_type="script"))
+
+    factory, browser, page = make_playwright_mock(steps)
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
+        result = extractor.fetch_page("https://landing.example/")
+
+    assert result["resources"] == [
+        {"url": "https://cdn.example/a.jpg", "type": "image", "content_type": "image/jpeg"},
+        {"url": "https://cdn.example/v.mp4", "type": "media", "content_type": "video/mp4"},
+    ]
 
 
 def test_fetch_page_records_redirect_chain_only_for_main_frame_navigations(extractor):
@@ -447,12 +472,17 @@ def test_analyze_one_failing_step_does_not_lose_the_rest(extractor):
 
 
 def test_analyze_unreachable_page_falls_back_to_input_host(extractor):
-    mocks = patch_steps(extractor, fetch_page=TimeoutError("strona nie odpowiada"))
+    mocks = patch_steps(
+        extractor,
+        fetch_page=TimeoutError("strona nie odpowiada"),
+        fetch_page_http=TimeoutError("http też nie"),
+    )
     report = extractor.analyze("https://martwa.example.pl/reklama")
 
     assert report.final_url is None and report.dom_fingerprint is None and report.redirect_chain == []
     assert report.host == "martwa.example.pl"
     assert any(e.startswith("browser: TimeoutError") for e in report.errors)
+    assert any(e.startswith("page: TimeoutError") for e in report.errors)
     mocks["get_tls_info"].assert_called_once_with("martwa.example.pl")  # infrastruktura nadal zebrana
 
 
@@ -579,3 +609,122 @@ def test_ensure_browser_launches_and_closes(extractor):
 
     browser.close.assert_called_once()
     assert "PLAYWRIGHT_BROWSERS_PATH" in os.environ
+
+
+def fake_http(routes):
+    class Raw:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self, size, decode_content=True):
+            return self.body[:size]
+
+    def get(url, **kwargs):
+        assert kwargs["allow_redirects"] is False
+        status, headers, body = routes[url]
+        return SimpleNamespace(
+            status_code=status, headers=headers, raw=Raw(body), encoding="utf-8", close=lambda: None
+        )
+
+    return get
+
+
+HTML = b"<html><body><h1>Wygrana</h1><p>Odbierz nagrode</p></body></html>"
+
+
+def test_http_fallback_follows_redirects_to_the_last_page(extractor):
+    routes = {
+        "https://t.example/c": (302, {"location": "https://mid.example/r"}, b""),
+        "https://mid.example/r": (301, {"location": "/final"}, b""),
+        "https://mid.example/final": (200, {"content-type": "text/html; charset=utf-8"}, HTML),
+    }
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", fake_http(routes)), patch(
+        "feature_extractor.web_infrastructure_extractor.check_public_url"
+    ):
+        page = extractor.fetch_page_http("https://t.example/c")
+    assert page["final_url"] == "https://mid.example/final"
+    assert [(h["url"], h["status"]) for h in page["hops"]] == [
+        ("https://t.example/c", 302),
+        ("https://mid.example/r", 301),
+        ("https://mid.example/final", 200),
+    ]
+    assert b"Wygrana" in page["html"].encode()
+
+
+def test_http_fallback_follows_meta_refresh(extractor):
+    refresh = b'<html><head><meta http-equiv="refresh" content="0; url=https://landing.example/ok"></head></html>'
+    routes = {
+        "https://a.example/": (200, {"content-type": "text/html"}, refresh),
+        "https://landing.example/ok": (200, {"content-type": "text/html"}, HTML),
+    }
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", fake_http(routes)), patch(
+        "feature_extractor.web_infrastructure_extractor.check_public_url"
+    ):
+        page = extractor.fetch_page_http("https://a.example/")
+    assert page["final_url"] == "https://landing.example/ok"
+
+
+def test_http_fallback_blocks_redirect_to_private_address(extractor):
+    routes = {"https://a.example/": (302, {"location": "http://127.0.0.1/admin"}, b"")}
+    resolver = lambda host, port: [(None, None, None, None, ("127.0.0.1" if host == "127.0.0.1" else "93.184.216.34", 0))]
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", fake_http(routes)), patch(
+        "feature_extractor.web_infrastructure_extractor.check_public_url",
+        lambda url: check_public_url(url, resolver),
+    ):
+        with pytest.raises(ValueError, match="niepubliczny"):
+            extractor.fetch_page_http("https://a.example/")
+
+
+def test_http_fallback_stops_on_redirect_loop(extractor):
+    routes = {"https://a.example/": (302, {"location": "https://a.example/"}, b"")}
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", fake_http(routes)), patch(
+        "feature_extractor.web_infrastructure_extractor.check_public_url"
+    ):
+        with pytest.raises(ValueError, match="przekierowań"):
+            extractor.fetch_page_http("https://a.example/")
+
+
+def test_non_html_final_response_gives_empty_html(extractor):
+    routes = {"https://a.example/f.pdf": (200, {"content-type": "application/pdf"}, b"%PDF")}
+    with patch("feature_extractor.web_infrastructure_extractor.requests.get", fake_http(routes)), patch(
+        "feature_extractor.web_infrastructure_extractor.check_public_url"
+    ):
+        assert extractor.fetch_page_http("https://a.example/f.pdf")["html"] == ""
+
+
+def test_analyze_uses_http_fallback_when_browser_fails(extractor):
+    fallback = {
+        "hops": [{"url": "https://t.example/c", "status": 302, "location": "https://szybki.pl/"},
+                 {"url": "https://szybki.pl/", "status": 200, "location": None}],
+        "final_url": "https://szybki.pl/",
+        "html": "<html><body><p>Treść strony</p></body></html>",
+        "resources": [],
+    }
+    patch_steps(extractor, fetch_page=RuntimeError("TargetClosedError: Browser closed\nCall log: ..."), fetch_page_http=fallback)
+    extractor.fetch_page_http = MagicMock(return_value=fallback)
+    report = extractor.analyze("https://t.example/c")
+    assert report.final_url == "https://szybki.pl/"
+    assert report.host == "szybki.pl"
+    assert "Treść strony" in report.page_text and report.page_html
+    assert [h["status"] for h in report.redirect_chain] == [302, 200]
+    assert report.errors[0] == "browser: RuntimeError: TargetClosedError: Browser closed"
+    assert any("zapasowego" in e for e in report.errors)
+
+
+def test_fetch_page_keeps_partial_result_when_load_fails_after_redirects(extractor):
+    from playwright.sync_api import Error as PlaywrightError
+
+    def steps(handler, page):
+        handler(nav_response(page, "https://t.example/c", 302, location="https://landing.example/"))
+        handler(nav_response(page, "https://landing.example/", 200))
+        raise PlaywrightError("Timeout 1000ms exceeded.\nCall log: waiting for load")
+
+    factory, browser, page = make_playwright_mock(steps)
+    page.url = "https://landing.example/"
+    page.content.return_value = "<html><body>czesciowa</body></html>"
+    with patch("feature_extractor.web_infrastructure_extractor.sync_playwright", factory):
+        result = extractor.fetch_page("https://t.example/c")
+    assert result["final_url"] == "https://landing.example/"
+    assert "czesciowa" in result["html"]
+    assert "częściowo" in result["warning"] and "Call log" not in result["warning"]
+    browser.close.assert_called_once()

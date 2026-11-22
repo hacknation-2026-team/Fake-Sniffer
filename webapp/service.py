@@ -19,7 +19,7 @@ from correlation.matcher import classify
 from correlation.profile import Profile, profile_from_report
 from correlation.similarity import compare
 
-from .view import deepfake_rows, profile_view, step_view
+from .view import deepfake_rows, page_media_view, profile_view, step_view
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
 TEXT_EXTENSIONS = {".txt", ".md"}
@@ -37,6 +37,8 @@ class Settings:
     faces_dir: Optional[str] = None
     use_gpu: bool = False
     deepfake: bool = True
+    ai_image: bool = True
+    page_media: bool = True
 
 
 @dataclass
@@ -58,6 +60,9 @@ def _default_orchestrator(settings: Settings) -> Any:
             reference_faces_dir=settings.faces_dir,
             models_dir=settings.models_dir,
             deepfake=settings.deepfake,
+            ai_image=settings.ai_image,
+            page_media=settings.page_media,
+            page_media_dir=str(settings.data_dir / "page_media"),
         )
     )
 
@@ -199,7 +204,9 @@ class Workspace:
             "inputs": analysis.report["inputs"],
             "steps": [step_view(s) for s in analysis.report["steps"]],
             "deepfake": deepfake_rows(analysis.report["steps"]),
-            "deepfake_enabled": self.settings.deepfake,
+            "deepfake_enabled": self.settings.deepfake or self.settings.ai_image,
+            "page_media": page_media_view(analysis.report["steps"]),
+            "page_media_enabled": self.settings.page_media,
             "has_features": not analysis.profile.is_empty,
             "added_as": analysis.added_as,
             "verdict": verdict,

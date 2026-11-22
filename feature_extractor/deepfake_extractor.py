@@ -51,6 +51,7 @@ class DeepfakeDetector:
         device: str = "cpu",
         models_dir: Optional[str] = None,
         audio_fake_label: Optional[str] = None,
+        image_fake_label: Optional[str] = None,
     ):
         """
         Gotowe klasyfikatory z Hugging Face: obraz (ViT) i głos (wav2vec2). Wynik to wskaźnik,
@@ -62,6 +63,7 @@ class DeepfakeDetector:
         self.device = device
         self.models_dir = models_dir
         self.audio_fake_label = audio_fake_label
+        self.image_fake_label = image_fake_label
         self._image: Optional[Tuple[Any, Any]] = None
         self._audio: Optional[Tuple[Any, Any]] = None
 
@@ -119,7 +121,7 @@ class DeepfakeDetector:
         with Image.open(image_path) as image:
             inputs = processor(images=image.convert("RGB"), return_tensors="pt")
         logits = self._logits(model, inputs)
-        return self._score(os.path.basename(image_path), self.image_model_name, model, logits)
+        return self._score(os.path.basename(image_path), self.image_model_name, model, logits, self.image_fake_label)
 
     def analyze_images(self, image_paths: Sequence[str]) -> Dict[str, Any]:
         """Wynik dla każdej klatki oraz średnia i maksimum (jedna podejrzana klatka też się liczy)."""

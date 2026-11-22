@@ -148,3 +148,14 @@ def test_broken_har_becomes_error_step(tmp_path):
     report = build_case_report(collect_case(root), FakeOrchestrator())
     assert report["steps"][0]["status"] == "error"
     assert profile_from_report(report).is_empty
+
+
+def test_run_input_keeps_page_sources():
+    from types import SimpleNamespace
+
+    from correlation.dataset import run_input
+
+    steps = [{"name": "ocr", "source": "page_image"}, {"name": "web_infrastructure", "source": "url"}]
+    orchestrator = SimpleNamespace(run=lambda **kw: SimpleNamespace(to_dict=lambda: {"steps": steps}))
+    result = run_input(orchestrator, "text", text="x")
+    assert [s["source"] for s in result] == ["page_image", "text"]

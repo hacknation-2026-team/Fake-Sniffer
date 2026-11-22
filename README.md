@@ -81,6 +81,30 @@ Zalecamy odpalanie na izolowanych kontenerach! System odpytuje zewnętrzne serwe
 
 Shipped as is, no warrianty, no responsibility! You use at your own risk!s
 
+## Obrazy generowane przez AI
+
+`feature_extractor/ai_image_extractor.py` ocenia gotowym klasyfikatorem z Hugging Face, czy obraz lub klatki filmu wygenerował model (Stable Diffusion, Midjourney, DALL-E). To inne zadanie niż deepfake, który wykrywa podmienione twarze. Domyślny model to `Ateeqq/ai-vs-human-image-detector` (SigLIP, licencja Apache-2.0, etykiety `ai` i `hum`). Wynik to prawdopodobieństwo, że obraz jest z AI, i jest wskaźnikiem, a nie dowodem: detektory słabo uogólniają na generatory spoza zbioru uczącego.
+
+```
+uv run main.py --image reklama.png --ai-image
+uv run main.py --video reklama.mp4 --ai-image
+uv run main.py --download-models --ai-image
+```
+
+W GUI detektor jest włączony, wyłączysz go flagą `--no-ai-image`. Inny model ustawisz w `OrchestratorConfig(ai_image_model=...)`. Gdy ma etykiety `LABEL_0` i `LABEL_1`, wskaż fałsz przez `ai_image_fake_label`. Uwaga na licencje: popularny `Organika/sdxl-detector` ma CC-BY-NC, więc nadaje się tylko do użytku niekomercyjnego.
+
+## Media na stronie
+
+Przy `--url` ekstraktor strony znajduje na niej obrazy (`img`, `srcset`, leniwe `data-src`, tła z CSS, `og:image`), filmy (`video`, `source`, strumienie HLS, osadzenia YouTube i podobne) oraz emotikony w tekście. Zapisuje je w kroku `web_infrastructure` (pole `media`) razem z liczbą i gęstością emotikon. Z flagą `--page-media` pobiera obrazy i filmy do `page_media_out/` i puszcza je przez te same ekstraktory co wgrane pliki (OCR, hashe, twarze, deepfake, obrazy AI, klatki wideo). Kroki mają źródło `page_image` i `page_video`.
+
+```
+uv run main.py --url https://przyklad.pl/oferta --page-media --ai-image
+```
+
+Pobieranie ma limity: do 8 obrazów (największe), 2 filmy, 15 MB na obraz i 60 MB na film, obrazy mniejsze niż 120 px i duplikaty są pomijane. HLS: pobierane jest ok. 30 s pierwszego wariantu, bez szyfrowania i bez fMP4. Osadzone filmy (YouTube) nie są pobierane. Każdy adres, także po przekierowaniu, musi wskazywać na adres publiczny (ochrona przed SSRF). W GUI pobieranie jest włączone, wyłączysz je flagą `--no-page-media`.
+
+Gdy przeglądarka zawiedzie, ekstraktor nie traci wyniku: zachowuje częściowo załadowaną stronę, a bez przeglądarki pobiera ją zwykłym HTTP, idąc za przekierowaniami (30x i meta refresh) do ostatniej strony. Taka strona nie wykona JavaScriptu.
+
 # Przygotowanie do pracy po kolei
 
 Sklonuj repo, a nastepnie wypakuj dane przykładowe do katalogu `dane`. Folderpowinien mieć strukturę następującą: foldery a w każdym wszystkie materiały dotyczące danego incydentu/kampanii. Utwórz folder na podobizny ludzi znanych których często dotyczą kampanie, nazwijmy go `ludzie`. W folderze `ludzie` powinniśmy mieć foldery których nazwami są imiona/nazwiska osób, a w tych katalogach winny znajdować się ich zdjęcia.
