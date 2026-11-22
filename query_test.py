@@ -52,7 +52,7 @@ def test_unrelated_report_has_no_cluster(tmp_path, capsys):
     new = write(tmp_path / "new.json", report("zupelnie-inna.pl"))
     assert main([new, "--base", base, "--clusters", clusters]) == 0
     text = capsys.readouterr().out
-    assert "Nowa kampania" in text and "kampania: brak" in text
+    assert "Brak dopasowania" in text and "kampania: brak" in text
 
 
 def test_warns_when_base_is_newer_than_clusters(tmp_path, capsys):

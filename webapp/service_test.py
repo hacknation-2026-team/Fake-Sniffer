@@ -82,7 +82,7 @@ def test_analyze_needs_input(workspace):
 def test_analyze_url_against_empty_base(workspace):
     result = workspace.analyze("https://scam.top/x", [])
     assert result["name"] == "https://scam.top/x"
-    assert result["verdict"]["verdict"] == "NEW_CAMPAIGN_CANDIDATE"
+    assert result["verdict"]["verdict"] == "NO_MATCH"
     assert result["steps"][0]["summary"] == "https://scam.top/x"
     assert result["has_features"]
 
@@ -241,3 +241,10 @@ def test_default_orchestrator_gets_page_media_and_ai_settings(settings):
     config = orchestrator.call_args[0][0]
     assert config.ai_image and config.page_media
     assert config.page_media_dir == str(settings.data_dir / "page_media")
+
+
+def test_analysis_view_has_risk_assessment(workspace):
+    result = workspace.analyze("https://scam.top/x", [])
+    risk = result["risk"]
+    assert risk["level"] in {"low", "mid", "high", "unknown"}
+    assert {"score", "label", "signals", "coverage"} <= set(risk)

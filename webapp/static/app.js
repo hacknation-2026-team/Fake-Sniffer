@@ -4,7 +4,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const VERDICTS = {
   KNOWN_CAMPAIGN: ["known", "Znana kampania"],
   WEAK_SIMILARITY: ["weak", "Słabe podobieństwo"],
-  NEW_CAMPAIGN_CANDIDATE: ["new", "Nowa kampania (kandydat)"],
+  NO_MATCH: ["new", "Brak dopasowania do bazy"],
 };
 const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new" };
 const FEATURE_LABELS = { infrastruktura: "Infrastruktura", twarz: "Twarz", obraz: "Obraz", tekst: "Tekst" };
@@ -140,6 +140,7 @@ function mainInfo(r) {
       nearest ? h("span", { class: "muted" }, ` do ${nearest.label} (${nearest.id})`) : null),
     v.top_features.length ? [h("h3", {}, "Co zadecydowało"), featureBars(v.top_features)] : null,
     v.reasons.length ? [h("h3", { style: "margin-top:14px" }, "Dlaczego"), h("ul", { class: "reasons" }, v.reasons.map((x) => h("li", {}, x)))] : null,
+    v.verdict === "NO_MATCH" ? h("p", { class: "muted small", style: "margin-top:10px" }, "Porównujemy tylko ze znanymi incydentami. Brak dopasowania nie oznacza ani oszustwa, ani uczciwej strony.") : null,
     v.outdated_clusters ? h("p", { class: "muted small" }, "Baza zmieniła się od ostatniej klasteryzacji, przelicz klastry w zakładce Campaigns.") : null);
 }
 
@@ -165,6 +166,20 @@ function deepfakeCard(r) {
     h("table", {}, h("thead", {}, h("tr", {}, ["Element", "Rodzaj", "Prawdopodobieństwo fałszerstwa", "Ocena"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)),
     h("p", { class: "muted small", style: "margin-top:12px" },
       "To wskaźnik z gotowych klasyfikatorów, a nie dowód. Modele uczono na konkretnych zbiorach i na nowych generatorach oraz po rekompresji mylą się częściej, a głosy modele znają głównie z angielskiego."));
+}
+
+function riskCard(r) {
+  const risk = r.risk;
+  if (!risk) return null;
+  const signals = risk.signals.map((s) => h("li", {}, h("span", { class: s.kind === "risk" ? "error" : "muted" }, s.kind === "risk" ? "+ " : "− "), s.text));
+  return h("div", { class: "card" },
+    h("h2", {}, "Czy to wygląda na fake?"),
+    h("p", {}, h("span", { class: `badge ${DEEPFAKE_BADGES[risk.level]}` }, risk.label), " ",
+      h("span", { class: "muted" }, `wynik ryzyka ${risk.score.toFixed(2)}`, risk.coverage.length ? `, dane: ${risk.coverage.join(", ")}` : "")),
+    h("div", { class: "bar", style: "max-width:320px;margin:8px 0" }, h("span", { style: `width:${percent(risk.score)}` })),
+    signals.length ? h("ul", { class: "reasons", style: "list-style:none;padding-left:0" }, signals) : h("p", { class: "muted" }, "Nie znaleziono ani sygnałów ryzyka, ani przemawiających za autentycznością."),
+    h("p", { class: "muted small", style: "margin-top:10px" },
+      "Ocena z jawnych reguł (wiek domeny, przekierowania, język nacisku, obrazy AI i deepfake), niezależna od bazy incydentów. To wskaźnik, a nie dowód, a wagi wymagają kalibracji na prawdziwych danych."));
 }
 
 function pageMediaCard(r) {
@@ -227,11 +242,12 @@ function renderResult(root, r) {
   const v = r.verdict;
   const campaign = v && v.campaign
     ? h("span", {}, h("strong", {}, v.campaign), ` (${r.campaign_size} incydentów)`, v.family ? h("span", { class: "muted" }, `, rodzina ${v.family}`) : null)
-    : h("span", { class: "muted" }, v ? "brak, nowa kampania" : "nie dotyczy");
+    : h("span", { class: "muted" }, v ? "brak dopasowania" : "nie dotyczy");
   fill(root,
     h("div", { class: "card" },
       h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Plik / nazwa pliku / URL"), h("th", {}, "Przydział do kampanii"))),
         h("tbody", {}, h("tr", {}, h("td", {}, r.name), h("td", {}, campaign))))),
+    riskCard(r),
     deepfakeCard(r),
     pageMediaCard(r),
     mainInfo(r),

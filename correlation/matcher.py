@@ -18,7 +18,7 @@ from .similarity import (
 
 KNOWN = "KNOWN_CAMPAIGN"
 WEAK = "WEAK_SIMILARITY"
-NEW = "NEW_CAMPAIGN_CANDIDATE"
+NO_MATCH = "NO_MATCH"
 NEIGHBOURS = 5
 
 
@@ -97,7 +97,8 @@ def classify(
     weak: float = WEAK_THRESHOLD,
 ) -> Verdict:
     """
-    Porównuje profil z całą bazą i decyduje: znana kampania, słabe podobieństwo albo nowa.
+    Porównuje profil z całą bazą i decyduje: znana kampania, słabe podobieństwo albo brak dopasowania.
+    Brak dopasowania nie oznacza ani oszustwa, ani uczciwej strony: baza zna tylko swoje incydenty.
     Z `clusters` dodatkowo wskazuje kampanię i rodzinę najbliższych sąsiadów.
     """
     campaigns = clusters.campaigns if clusters else {}
@@ -112,7 +113,7 @@ def classify(
     )
     if not compared or not compared[0].comparison.modalities:
         reason = "baza jest pusta" if not compared else "brak wspólnych cech do porównania"
-        return Verdict(NEW, 0.0, reasons=[reason])
+        return Verdict(NO_MATCH, 0.0, reasons=[reason])
 
     best = compared[0].comparison
     linked = [n for n in compared[:NEIGHBOURS] if n.comparison.linked(threshold)]
@@ -121,7 +122,17 @@ def classify(
     elif best.score >= weak:
         kind = WEAK
     else:
-        kind = NEW
+        kind = NO_MATCH
+
+    if kind == NO_MATCH:
+        reason = f"nic w bazie nie jest podobne: najlepszy wynik {best.score:.2f}, próg słabego podobieństwa {weak:.2f}"
+        return Verdict(
+            verdict=kind,
+            best_score=best.score,
+            reasons=[reason],
+            neighbours=compared[:NEIGHBOURS],
+            outdated_clusters=bool(clusters) and any(i.id not in campaigns for i in base.incidents),
+        )
 
     return Verdict(
         verdict=kind,

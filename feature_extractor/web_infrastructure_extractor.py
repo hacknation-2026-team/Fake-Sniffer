@@ -32,6 +32,7 @@ def install_chromium() -> None:
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
 
 
+BROWSER_ARGS = ["--disable-dev-shm-usage", "--disable-gpu"]
 RDAP_URL_TEMPLATES: Dict[str, str] = {"pl": "https://rdap.dns.pl/domain/{domain}"}
 RDAP_DEFAULT_TEMPLATE = "https://rdap.org/domain/{domain}"
 
@@ -203,13 +204,15 @@ class WebInfrastructureExtractor:
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(model_dir(PLAYWRIGHT, self.models_dir))
 
     def _launch_browser(self, playwright: Any) -> Any:
+        """Chromium z flagami na WSL i kontenery, gdzie mały /dev/shm i brak GPU wywalają start."""
+        options = {"headless": True, "args": BROWSER_ARGS}
         try:
-            return playwright.chromium.launch(headless=True)
+            return playwright.chromium.launch(**options)
         except PlaywrightError as exc:
             if "Executable doesn't exist" not in str(exc):
                 raise
         install_chromium()
-        return playwright.chromium.launch(headless=True)
+        return playwright.chromium.launch(**options)
 
     def ensure_browser(self) -> None:
         """Uruchamia i zamyka przeglądarkę, pobierając ją, jeśli jeszcze jej nie ma."""

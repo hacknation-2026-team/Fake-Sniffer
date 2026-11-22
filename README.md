@@ -54,7 +54,7 @@ uv run cluster.py --base base.json --out clusters.json
 uv run query.py nowy.json --base base.json --clusters clusters.json
 ```
 
-`match.py` porównuje raport z każdym incydentem w bazie. Wynik to jeden z trzech werdyktów: `KNOWN_CAMPAIGN` (podobne do znanej kampanii), `WEAK_SIMILARITY` (słabe podobieństwo) albo `NEW_CAMPAIGN_CANDIDATE` (nowa kampania). Do tego podaje trzy cechy o największym wkładzie, powody po polsku (wspólna domena, ta sama osoba, podobny obraz, wspólne nazwy własne) i najbliższe incydenty. Z `--add` raport trafia do bazy, ale nie do żadnego klastra, dopóki nie uruchomisz `cluster.py`.
+`match.py` porównuje raport z każdym incydentem w bazie. Wynik to jeden z trzech werdyktów: `KNOWN_CAMPAIGN` (podobne do znanej kampanii), `WEAK_SIMILARITY` (słabe podobieństwo) albo `NO_MATCH` (brak dopasowania do znanych incydentów). `NO_MATCH` nie znaczy ani „oszustwo", ani „strona uczciwa": baza zna tylko swoje incydenty, więc np. `google.com` dostanie brak dopasowania. Do tego podaje trzy cechy o największym wkładzie, powody po polsku (wspólna domena, ta sama osoba, podobny obraz, wspólne nazwy własne) i najbliższe incydenty. Z `--add` raport trafia do bazy, ale nie do żadnego klastra, dopóki nie uruchomisz `cluster.py`.
 
 `cluster.py` liczy grupy dla całej bazy i zapisuje je w `clusters.json`, nie zmieniając bazy. Kampania to spójna składowa grafu przy progu `--tight` (0.85), rodzina kampanii to społeczność Louvain przy progu `--threshold` (0.65).
 
@@ -104,6 +104,12 @@ uv run main.py --url https://przyklad.pl/oferta --page-media --ai-image
 Pobieranie ma limity: do 8 obrazów (największe), 2 filmy, 15 MB na obraz i 60 MB na film, obrazy mniejsze niż 120 px i duplikaty są pomijane. HLS: pobierane jest ok. 30 s pierwszego wariantu, bez szyfrowania i bez fMP4. Osadzone filmy (YouTube) nie są pobierane. Każdy adres, także po przekierowaniu, musi wskazywać na adres publiczny (ochrona przed SSRF). W GUI pobieranie jest włączone, wyłączysz je flagą `--no-page-media`.
 
 Gdy przeglądarka zawiedzie, ekstraktor nie traci wyniku: zachowuje częściowo załadowaną stronę, a bez przeglądarki pobiera ją zwykłym HTTP, idąc za przekierowaniami (30x i meta refresh) do ostatniej strony. Taka strona nie wykona JavaScriptu.
+
+## Ocena ryzyka: czy to wygląda na fake
+
+Werdykt z bazy mówi tylko, czy raport przypomina znane incydenty. Przy `NO_MATCH` pomaga osobna ocena `correlation/risk.py`, niezależna od bazy. Używa jawnych reguł z wagami, a każdy sygnał ma powód po polsku, więc wynik da się sprawdzić i poprawić. Sygnały podnoszące ryzyko: świeża domena (RDAP), przekierowania przez wiele domen lub skracacz linków, często nadużywana strefa (`.top`, `.xyz`), brak HTTPS, język nacisku (presja czasu, obietnica zysku, wyłudzanie danych, nagrody), osoba publiczna obok obietnicy zysku, dużo emotikon oraz obrazy AI, deepfake i syntetyczny głos. Sygnał obniżający ryzyko: wiekowa domena. Wynik to `Raczej nie fake` (do 0.25), `Podejrzane` (do 0.5) albo `Prawdopodobnie fake`, a bez danych `Za mało danych`. Ocena jest w GUI (karta „Czy to wygląda na fake?") oraz w wyjściu `match.py` i `query.py` (pole `risk` w `--out`).
+
+Wagi dobrano ręcznie i nie były kalibrowane na prawdziwych danych, a sam tekst nie wystarczy, żeby dać `Prawdopodobnie fake` (frazy mają ograniczony wpływ). To wskaźnik, a nie dowód.
 
 # Przygotowanie do pracy po kolei
 
