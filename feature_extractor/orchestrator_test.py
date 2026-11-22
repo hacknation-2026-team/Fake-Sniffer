@@ -693,3 +693,88 @@ def test_page_media_download_failure_is_a_step_error(tmp_path):
     report = make_orchestrator(config, web_extractor=page_web(MEDIA), **mocks).run(url="https://szybki.pl")
     assert report.step("page_media", "url").status == "error"
     assert "text_embeddings" in names(report)
+
+
+def graphic_png(tmp_path):
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (300, 300), "white")
+    ImageDraw.Draw(image).ellipse((60, 60, 240, 240), fill=(30, 90, 200))
+    path = tmp_path / "logo.png"
+    image.save(path)
+    return str(path)
+
+
+def photo_png(tmp_path, name="foto.png"):
+    import numpy as np
+    from PIL import Image
+
+    rng = np.random.default_rng(3)
+    path = tmp_path / name
+    Image.fromarray(rng.integers(0, 255, (200, 300, 3), dtype="uint8")).save(path)
+    return str(path)
+
+
+def test_ai_image_is_skipped_for_logos_and_graphics(tmp_path):
+    detector = deepfake_mock()
+    config = OrchestratorConfig(ai_image=True)
+    report = make_orchestrator(config, ai_image_detector=detector, **image_mocks()).run(image=graphic_png(tmp_path))
+    step = report.step("ai_image")
+    assert step.status == "skipped" and "grafika" in step.error
+    detector.analyze_image.assert_not_called()
+
+
+def test_ai_image_runs_for_photographs(tmp_path):
+    detector = deepfake_mock()
+    config = OrchestratorConfig(ai_image=True)
+    report = make_orchestrator(config, ai_image_detector=detector, **image_mocks()).run(image=photo_png(tmp_path))
+    assert report.step("ai_image").status == "ok"
+
+
+def test_deepfake_is_skipped_when_image_has_no_faces():
+    detector = deepfake_mock()
+    mocks = image_mocks()
+    mocks["faces"].extract_faces.return_value = []
+    config = OrchestratorConfig(deepfake=True)
+    report = make_orchestrator(config, deepfake_detector=detector, **mocks).run(image="a.png")
+    step = report.step("deepfake_image")
+    assert step.status == "skipped" and "twarzy" in step.error
+    detector.analyze_image.assert_not_called()
+
+
+def test_deepfake_still_runs_when_face_step_failed():
+    detector = deepfake_mock()
+    mocks = image_mocks()
+    mocks["faces"].extract_faces.side_effect = RuntimeError("brak modelu twarzy")
+    config = OrchestratorConfig(deepfake=True)
+    report = make_orchestrator(config, deepfake_detector=detector, **mocks).run(image="a.png")
+    assert report.step("deepfake_image").status == "ok"
+
+
+def test_video_deepfake_uses_only_frames_with_faces_and_skips_without():
+    detector = deepfake_mock()
+    mocks = video_mocks()
+    mocks["video_extractor"].analyze.return_value["keyframes"] = [
+        {"file_path": "kf/1.jpg", "faces": [{"embedding": [1.0, 0.0]}]},
+        {"file_path": "kf/2.jpg"},
+    ]
+    config = OrchestratorConfig(deepfake=True, keyframes_dir="kf")
+    make_orchestrator(config, deepfake_detector=detector, **mocks).run(video="/x/ad.mp4")
+    detector.analyze_images.assert_called_once_with(["kf/1.jpg"])
+
+    mocks = video_mocks()
+    mocks["video_extractor"].analyze.return_value.update(keyframes=[{"file_path": "kf/1.jpg"}], face_embeddings=[])
+    report = make_orchestrator(config, deepfake_detector=deepfake_mock(), **mocks).run(video="/x/ad.mp4")
+    assert report.step("deepfake_frames").status == "skipped"
+
+
+def test_video_ai_frames_skip_graphic_frames(tmp_path):
+    detector = deepfake_mock()
+    mocks = video_mocks()
+    mocks["video_extractor"].analyze.return_value["keyframes"] = [
+        {"file_path": graphic_png(tmp_path)},
+        {"file_path": photo_png(tmp_path)},
+    ]
+    config = OrchestratorConfig(ai_image=True, keyframes_dir="kf")
+    make_orchestrator(config, ai_image_detector=detector, **mocks).run(video="/x/ad.mp4")
+    assert detector.analyze_images.call_args[0][0] == [str(tmp_path / "foto.png")]

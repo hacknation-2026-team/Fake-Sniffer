@@ -6,7 +6,7 @@ const VERDICTS = {
   WEAK_SIMILARITY: ["weak", "Słabe podobieństwo"],
   NO_MATCH: ["new", "Brak dopasowania do bazy"],
 };
-const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new" };
+const DEEPFAKE_BADGES = { high: "known", mid: "weak", low: "low", unknown: "new", skip: "new" };
 const FEATURE_LABELS = { infrastruktura: "Infrastruktura", twarz: "Twarz", obraz: "Obraz", tekst: "Tekst" };
 const PALETTE = ["#c8412b", "#2b5fb0", "#2f7d4f", "#b7791f", "#7a4fa3", "#1f8a8a", "#a33f6b", "#5d6b2f"];
 const state = { files: [], selected: null, compareFrom: null, campaigns: null };
@@ -156,7 +156,7 @@ function deepfakeCard(r) {
       h("td", { class: "wide", title: row.item }, h("span", {}, row.item), row.origin ? h("span", { class: "muted small" }, " (ze strony)") : null),
       h("td", {}, row.kind),
       h("td", { style: "min-width:180px" }, value == null
-        ? h("span", { class: row.error ? "error" : "muted" }, row.error || "nie rozpoznano etykiety")
+        ? h("span", { class: row.error ? "error" : "muted" }, row.error || row.note || "nie rozpoznano etykiety")
         : [h("div", { class: "bar" }, h("span", { style: `width:${percent(value)}` })),
            h("span", { class: "muted small" }, `max ${percent(value)}`, row.mean != null && row.mean !== value ? `, średnio ${percent(row.mean)}` : "")]),
       h("td", {}, h("span", { class: `badge ${DEEPFAKE_BADGES[row.level]}` }, row.verdict)));

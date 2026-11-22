@@ -139,3 +139,13 @@ def test_page_media_view_reports_download_error():
     ]
     view = page_media_view(steps)
     assert view["error"] == "OSError: dysk pełny" and view["downloaded"] is False
+
+
+def test_deepfake_rows_show_skipped_detectors_with_reason():
+    from webapp.view import deepfake_rows
+
+    steps = [{"name": "ai_image", "source": "page_image", "status": "skipped",
+              "data": {"file": "logo.png"}, "error": "grafika, nie fotografia (przezroczyste tło)"}]
+    row = deepfake_rows(steps)[0]
+    assert (row["item"], row["level"], row["verdict"]) == ("logo.png", "skip", "pominięto")
+    assert "grafika" in row["note"] and row["error"] is None and row["max"] is None

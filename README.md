@@ -81,6 +81,10 @@ Zalecamy odpalanie na izolowanych kontenerach! System odpytuje zewnętrzne serwe
 
 Shipped as is, no warrianty, no responsibility! You use at your own risk!s
 
+## Kiedy detektory się uruchamiają
+
+Detektory uczono na zdjęciach, więc na logach, ikonach, odznakach i ilustracjach dają przypadkowe wyniki. Dlatego deepfake działa tylko na obrazach i klatkach, na których wykryto twarz, a detektor obrazów AI tylko na fotografiach. Grafikę rozpoznaje `feature_extractor/image_kind.py` po pikselach: przezroczyste tło, skrajne proporcje (paski i banery), kilka płaskich kolorów lub duże jednolite plamy. Pominięty krok zostaje w raporcie ze statusem `skipped` i powodem (w GUI wiersz „pominięto"). Progi są heurystyką, więc zdjęcie produktu na białym tle bywa uznane za grafikę, a mocno zaszumiona grafika za zdjęcie.
+
 ## Obrazy generowane przez AI
 
 `feature_extractor/ai_image_extractor.py` ocenia gotowym klasyfikatorem z Hugging Face, czy obraz lub klatki filmu wygenerował model (Stable Diffusion, Midjourney, DALL-E). To inne zadanie niż deepfake, który wykrywa podmienione twarze. Domyślny model to `Ateeqq/ai-vs-human-image-detector` (SigLIP, licencja Apache-2.0, etykiety `ai` i `hum`). Wynik to prawdopodobieństwo, że obraz jest z AI, i jest wskaźnikiem, a nie dowodem: detektory słabo uogólniają na generatory spoza zbioru uczącego.

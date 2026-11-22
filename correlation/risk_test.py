@@ -99,3 +99,9 @@ def test_describe_risk_lists_signals_with_signs():
 def test_http_site_only_gets_https_signal():
     result = assess(report(web(final_url="http://a.pl/", registered_domain="a.pl")))
     assert texts(result) == ["strona bez szyfrowania HTTPS"]
+
+
+def test_ordinary_login_prompt_is_not_a_signal():
+    result = assess(report(web(page_text="Google Szukaj Zaloguj się Poczta Grafika", rdap={"age_days": 10000})))
+    assert [s.text for s in result.signals] == ["domena istnieje od 27 lat"]
+    assert result.level == "low"

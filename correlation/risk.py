@@ -28,7 +28,7 @@ PHRASES: Dict[str, List[str]] = {
     ],
     "wyłudzenie danych": [
         "podaj dane", "podaj numer", "pesel", "dane karty", "numer karty", "zweryfikuj konto",
-        "potwierdz tozsamosc", "zaloguj sie", "kod sms", "dopłata", "doplata",
+        "potwierdz tozsamosc", "kod sms", "dopłata", "doplata",
     ],
     "sensacyjny język": [
         "szok", "nie uwierzysz", "ujawnil", "sekret", "lekarze nienawidza", "polecaja", "afera", "ukrywaja",
@@ -170,11 +170,11 @@ def _peak(report: Dict[str, Any], names: Iterable[str]) -> Optional[float]:
 def _media(report: Dict[str, Any]) -> List[Signal]:
     signals: List[Signal] = []
     ai = _peak(report, ("ai_image", "ai_frames"))
-    if ai is not None and ai >= 0.7:
-        signals.append(Signal(f"obraz prawdopodobnie wygenerowany przez AI ({ai:.0%})", 0.2 if ai >= 0.9 else 0.1))
+    if ai is not None and ai >= 0.8:
+        signals.append(Signal(f"obraz prawdopodobnie wygenerowany przez AI ({ai:.0%})", 0.2 if ai >= 0.95 else 0.1))
     deepfake = _peak(report, ("deepfake_image", "deepfake_frames"))
     if deepfake is not None and deepfake >= 0.7:
-        signals.append(Signal(f"twarz lub obraz wygląda na deepfake ({deepfake:.0%})", 0.25))
+        signals.append(Signal(f"twarz wygląda na deepfake ({deepfake:.0%})", 0.2 if deepfake >= 0.9 else 0.1))
     voice = _peak(report, ("deepfake_audio",))
     if voice is not None and voice >= 0.7:
         signals.append(Signal(f"głos wygląda na syntetyczny ({voice:.0%})", 0.2))
