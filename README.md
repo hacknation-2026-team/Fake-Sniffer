@@ -107,6 +107,8 @@ uv run main.py --url https://przyklad.pl/oferta --page-media --ai-image
 
 Pobieranie ma limity: do 8 obrazów (największe), 2 filmy, 15 MB na obraz i 60 MB na film, obrazy mniejsze niż 120 px i duplikaty są pomijane. HLS: pobierane jest ok. 30 s pierwszego wariantu, bez szyfrowania i bez fMP4. Osadzone filmy (YouTube) nie są pobierane. Każdy adres, także po przekierowaniu, musi wskazywać na adres publiczny (ochrona przed SSRF). W GUI pobieranie jest włączone, wyłączysz je flagą `--no-page-media`.
 
+Media wyciągane są także z zapisanego HTML-a (plik wgrany w GUI albo w folderze incydentu dla `build_base.py`). Względne linki rozwijane są względem adresu z HAR-a, a gdy go nie ma, z `link rel=canonical` albo `og:url`. Bez takiego adresu względne linki zostaną pominięte. Pobieranie i ocena mediów z zapisanego HTML-a działa tylko przy włączonym `page_media` (w GUI domyślnie tak, w `build_base.py` nie, żeby budowa bazy nie pobierała setek obrazów z sieci).
+
 Gdy przeglądarka zawiedzie, ekstraktor nie traci wyniku: zachowuje częściowo załadowaną stronę, a bez przeglądarki pobiera ją zwykłym HTTP, idąc za przekierowaniami (30x i meta refresh) do ostatniej strony. Taka strona nie wykona JavaScriptu.
 
 ## Ocena ryzyka: czy to wygląda na fake

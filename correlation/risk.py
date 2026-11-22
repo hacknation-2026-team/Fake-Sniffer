@@ -150,7 +150,9 @@ def _content(report: Dict[str, Any], identities: Iterable[str]) -> List[Signal]:
         signals.append(Signal(f"osoba publiczna ({', '.join(names[:2])}) obok obietnicy zysku", 0.25))
 
     for web in _steps(report, "web_infrastructure"):
-        emojis = (web.get("media") or {}).get("emojis") or {}
+        emojis = (web.get("media") or {}).get("emojis")
+        if emojis is None:
+            continue
         if emojis.get("total", 0) >= 5 and emojis.get("density", 0) >= 6:
             signals.append(Signal(f"dużo emotikon: {emojis['total']} ({emojis['density']} na 1000 znaków)", 0.08))
         break

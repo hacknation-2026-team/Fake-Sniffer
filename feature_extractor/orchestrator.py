@@ -397,6 +397,12 @@ class Orchestrator:
             report.steps.append(StepResult("paragraphs", "url", "skipped", 0.0, None, "brak HTML strony"))
         self._run_page_media(report, data, url)
 
+    def run_page_media(self, media: Dict[str, Any], url: str) -> List[Dict[str, Any]]:
+        """Pobiera i ocenia media znalezione w już zapisanym HTML-u. Zwraca kroki w postaci słowników."""
+        report = Report(datetime.now(timezone.utc).isoformat(timespec="seconds"), {"url": url})
+        self._run_page_media(report, {"media": media, "final_url": url}, url)
+        return report.to_dict()["steps"]
+
     def _run_page_media(self, report: Report, data: Optional[Dict[str, Any]], url: str) -> None:
         """Pobiera obrazy i filmy ze strony i puszcza je przez te same kroki co wgrane pliki."""
         media = (data or {}).get("media")

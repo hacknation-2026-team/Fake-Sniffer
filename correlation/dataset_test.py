@@ -159,3 +159,51 @@ def test_run_input_keeps_page_sources():
     orchestrator = SimpleNamespace(run=lambda **kw: SimpleNamespace(to_dict=lambda: {"steps": steps}))
     result = run_input(orchestrator, "text", text="x")
     assert [s["source"] for s in result] == ["page_image", "text"]
+
+
+SHOP_HTML = """<html><head><link href="https://shop.example/p/1" rel="canonical"></head><body>
+<h1>Zestaw 🔥</h1><img src="/img/a.png?w=750&h=900"><img src="/img/icon.png?w=40&h=40">
+<video poster="/img/p.png"><source src="https://cdn.example/v.mp4"></video></body></html>"""
+
+
+def html_only_case(tmp_path):
+    folder = tmp_path / "gui" / "case"
+    folder.mkdir(parents=True)
+    (folder / "strona.html").write_text(SHOP_HTML, encoding="utf-8")
+    from correlation.dataset import collect_case
+
+    return collect_case(folder)
+
+
+def test_saved_html_reports_its_images_videos_and_emojis(tmp_path):
+    from correlation.dataset import build_case_report
+
+    report = build_case_report(html_only_case(tmp_path), FakeOrchestrator())
+    step = next(s for s in report["steps"] if s["name"] == "web_infrastructure")
+    media = step["data"]["media"]
+    urls = [i["url"] for i in media["images"]]
+    assert "https://shop.example/img/a.png?w=750&h=900" in urls
+    assert not any("icon.png" in u for u in urls)
+    assert [v["url"] for v in media["videos"]] == ["https://cdn.example/v.mp4"]
+    assert media["emojis"]["total"] == 1
+
+
+def test_saved_html_media_is_downloaded_only_when_page_media_is_enabled(tmp_path):
+    from correlation.dataset import build_case_report
+
+    class Orchestrator(FakeOrchestrator):
+        def __init__(self, enabled):
+            super().__init__()
+            self.config = SimpleNamespace(keyframes_dir="", page_media=enabled)
+            self.page_calls = []
+
+        def run_page_media(self, media, url):
+            self.page_calls.append(url)
+            return [{"name": "page_media", "source": "url", "status": "ok", "data": []}]
+
+    off, on = Orchestrator(False), Orchestrator(True)
+    case = html_only_case(tmp_path)
+    assert "page_media" not in [s["name"] for s in build_case_report(case, off)["steps"]]
+    assert off.page_calls == []
+    assert "page_media" in [s["name"] for s in build_case_report(case, on)["steps"]]
+    assert on.page_calls == ["https://shop.example/p/1"]
